@@ -1,4 +1,4 @@
-import init, { Test } from "./histomap.js";
+import init, { Test } from "./core.js";
 
 // Initialization
 (async () => { await init(); exec(); })();
