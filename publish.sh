@@ -13,7 +13,6 @@ git checkout gh-pages
 git pull --rebase
 git checkout master -- pkg/*
 mv ./pkg/{.,}* ./
-rmdir ./pkg
 git add *
 git commit -m "deployment"
 git push
