@@ -12,7 +12,8 @@ git commit -m "deployment from master"
 git checkout gh-pages
 git pull --rebase
 git checkout master -- pkg/*
-git add ./pkg/*
+mv ./pkg/{.,}* ./
+git add *
 git commit -m "deployment"
 git push
 git checkout $current
