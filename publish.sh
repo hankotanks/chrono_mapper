@@ -7,14 +7,18 @@ wasm-pack build --target web --no-pack --out-dir ./pkg
 rm "./pkg/.gitignore"
 cp -r static/* pkg
 cp -r js/* pkg
-git add -f pkg/\*
-git commit -m $1
+git add -A
+git commit -m "$1"
 git checkout gh-pages
 git pull --rebase
 git checkout master -- pkg/*
+git checkout gh-pages
 mv ./pkg/{.,}* ./
-git add *
+git add -A
 git commit -m "deployment"
 git push
 git checkout $current
-git stash pop
+if [ "$current" != "master" ]; then
+  git checkout $current
+  git stash pop
+fi
