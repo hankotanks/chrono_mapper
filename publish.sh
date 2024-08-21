@@ -1,7 +1,7 @@
 wasm-pack build --target web --no-pack --out-dir ./pkg
 rm "./pkg/.gitignore"
-cp -r "./static"* "./pkg"
-cp -r "./js"* "./pkg"
+cp -r static/* pkg
+cp -r js/* pkg
 git checkout gh-pages
 git pull --rebase
 git checkout master -- pkg/*
