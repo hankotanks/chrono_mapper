@@ -2,6 +2,8 @@ wasm-pack build --target web --no-pack --out-dir ./pkg
 rm "./pkg/.gitignore"
 cp -r static/* pkg
 cp -r js/* pkg
+git add -f pkg/\*
+git commit -m "deployment from master"
 git checkout gh-pages
 git pull --rebase
 git checkout master -- pkg/*
