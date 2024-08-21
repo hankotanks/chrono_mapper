@@ -8,7 +8,7 @@ rm "./pkg/.gitignore"
 cp -r static/* pkg
 cp -r js/* pkg
 git add -f pkg/\*
-git commit -m "deployment from master"
+git commit -m $1
 git checkout gh-pages
 git pull --rebase
 git checkout master -- pkg/*
