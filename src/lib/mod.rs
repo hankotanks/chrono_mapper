@@ -6,6 +6,6 @@ pub struct Test;
 #[wasm_bindgen]
 impl Test {
     pub fn hello() -> String {
-        String::from("testing")
+        String::from("Hello, world!")
     }
 }
