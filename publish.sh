@@ -1,3 +1,8 @@
+current=$(git rev-parse --abbrev-ref HEAD)
+if [ "$current" != "master" ]; then
+  git stash
+  git checkout master
+fi
 wasm-pack build --target web --no-pack --out-dir ./pkg
 rm "./pkg/.gitignore"
 cp -r static/* pkg
@@ -10,4 +15,5 @@ git checkout master -- pkg/*
 git add ./pkg/*
 git commit -m "deployment"
 git push
-sleep 50
+git checkout $current
+git stash pop
