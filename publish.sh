@@ -3,7 +3,7 @@ if [ "$current" != "master" ]; then
   git stash
   git checkout master
 fi
-wasm-pack build --target web --no-pack --out-dir ./pkg
+wasm-pack build --target web --no-pack --out-name core --out-dir ./pkg
 rm "./pkg/.gitignore"
 cp -r static/* pkg
 cp -r js/* pkg
