@@ -23,6 +23,9 @@ mv ./pkg/{.,}* ./
 git add -A
 git commit -m "deployment"
 git push
+git checkout master
+git reset HEAD~
+echo "*" > "./pkg/.gitignore"
 git checkout $current
 if [ "$current" != "master" ]; then
   git checkout $current
