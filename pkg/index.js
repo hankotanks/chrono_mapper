@@ -1,18 +1,21 @@
-import init, { Test } from "./core.js";
+import init, { Wrapper } from "./core.js";
 
 // Initialization
+const exec = async () => {
+    Wrapper.run();
+
+    const resizeCanvas = _ => {
+        Wrapper.update_canvas(String(window.innerWidth), String(window.innerHeight));
+    };
+    
+    resizeCanvas();
+    
+    let sinceLastResize;
+    window.onresize = _ => {
+        clearTimeout(sinceLastResize);
+    
+        sinceLastResize = setTimeout(resizeCanvas, 300);
+    };
+};
+
 (async () => { await init(); exec(); })();
-
-function exec() {
-    const body = document.querySelector("body");
-
-    document.querySelector("button").addEventListener("click", () => {
-        const element = () => {
-            const li = document.createElement("div");
-            li.textContent = Test.hello();
-            return li;
-        };
-
-        body.appendChild(element());
-    });
-}

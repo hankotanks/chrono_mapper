@@ -1,0 +1,17 @@
+[package]
+name = "backend"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "lib/mod.rs"
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+static-files = "0.2.3"
+
+[dependencies]
+anyhow = { workspace = true }
+log = { workspace = true }
+static-files = "0.2.3"
+winit = { workspace = true }

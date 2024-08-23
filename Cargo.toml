@@ -1,11 +1,8 @@
-[package]
-name = "histomap"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = ["backend", "app"]
+resolver = "2"
 
-[lib]
-path = "src/lib/mod.rs"
-crate-type = ["cdylib", "rlib"]
-
-[dependencies]
-wasm-bindgen = "0.2.91"
+[workspace.dependencies]
+log = "0.4"
+anyhow = "1.0.81"
+winit = "0.29.15"
