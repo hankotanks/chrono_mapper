@@ -10,7 +10,11 @@ rm "./pkg/.gitignore"
 cp -r static/* pkg
 cp -r js/* pkg
 git add pkg/\*
-git commit -m "$1"
+if [ $# -eq 0 ]; then
+    git commit -m "deployment from master"
+else
+  git commit -m "$1"
+fi
 git checkout gh-pages
 git pull --rebase
 git checkout master -- pkg/*
