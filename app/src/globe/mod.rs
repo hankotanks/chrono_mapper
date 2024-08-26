@@ -1,13 +1,26 @@
+mod shaders;
+mod vertex;
+
 use winit::dpi;
 
 #[derive(Clone, Copy)]
 pub struct GlobeConfig {
     format: wgpu::TextureFormat,
+    slices: u32,
+    stacks: u32,
+    shader_asset_path: &'static str,
 }
 
+// TODO: GlobeConfig should not implement Default
+// because members like `shader_asset_path` are out of scope
 impl Default for GlobeConfig {
     fn default() -> Self {
-        Self { format: wgpu::TextureFormat::Rgba8Unorm, }
+        Self { 
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            slices: 20,
+            stacks: 20,
+            shader_asset_path: "shaders::render",
+        }
     }
 }
 
@@ -16,6 +29,8 @@ pub struct Globe {
     queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
+    geometry: vertex::Geometry,
+    pipeline: wgpu::RenderPipeline,
 }
 
 impl backend::Harness for Globe {
@@ -27,7 +42,12 @@ impl backend::Harness for Globe {
         assets: std::collections::HashMap<&'a str, &'a [u8]>,
         window: &winit::window::Window,
     ) -> anyhow::Result<Self> where Self: Sized {
-        let Self::Config { format, } = config;
+        let Self::Config { 
+            format, 
+            slices,
+            stacks,
+            shader_asset_path,
+        } = config;
 
         fn create_surface_target(
             window: &winit::window::Window
@@ -105,11 +125,66 @@ impl backend::Harness for Globe {
         // Configure the surface (no longer platform-specific)
         surface.configure(&device, &surface_config);
 
+        let pipeline_layout = device.create_pipeline_layout(&{
+            wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            }
+        });
+
+        let pipeline_shader = device.create_shader_module({
+            shaders::load_shader(shader_asset_path, &assets)?
+        });
+
+        let pipeline = device.create_render_pipeline(&{
+            wgpu::RenderPipelineDescriptor {
+                label: None,
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &pipeline_shader,
+                    entry_point: "vertex", // TODO
+                    buffers: &[vertex::Vertex::layout()],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &pipeline_shader,
+                    entry_point: "fragment",
+                    targets: &[
+                        Some(wgpu::ColorTargetState {
+                            format,
+                            blend: Some(wgpu::BlendState::REPLACE),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })
+                    ],
+                }),
+                depth_stencil: None,
+                multiview: None,
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+            }
+        });
+
+        let geometry = vertex::Geometry::generate(slices, stacks, &device);
+
         Ok(Self {
             device,
             queue,
             surface,
             surface_config,
+            geometry,
+            pipeline,
         })
     }
 
@@ -132,7 +207,13 @@ impl backend::Harness for Globe {
         let Self {
             device,
             queue,
-            surface, ..
+            surface, 
+            pipeline, 
+            geometry: vertex::Geometry {
+                vertex_buffer,
+                index_count,
+                index_buffer, ..
+            }, ..
         } = self;
 
         let output = surface.get_current_texture()?;
@@ -154,12 +235,27 @@ impl backend::Harness for Globe {
                 },
             };
 
-            let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(color_attachment)],
                 depth_stencil_attachment: None,
                 ..Default::default()
             });
+
+            // bind render pipeline
+            pass.set_pipeline(pipeline);
+
+            // set index buffer
+            pass.set_index_buffer(
+                index_buffer.slice(..), 
+                wgpu::IndexFormat::Uint16,
+            );
+
+            // set vertex buffer
+            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+
+            // draw
+            pass.draw_indexed(0..*index_count, 0, 0..1);
         }
 
         // Submit for execution (async)
