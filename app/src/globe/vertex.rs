@@ -40,11 +40,14 @@ impl Geometry {
         use wgpu::util::DeviceExt as _;
 
         let vertices = vec![
-            Vertex { position: [-0.0868241, 0.49240386, 0.0], color: [0.5, 0.0, 0.5] },
-            Vertex { position: [-0.49513406, 0.06958647, 0.0], color: [0.5, 0.0, 0.5] },
-            Vertex { position: [-0.21918549, -0.44939706, 0.0], color: [0.5, 0.0, 0.5] },
-            Vertex { position: [0.35966998, -0.3473291, 0.0], color: [0.5, 0.0, 0.5] },
-            Vertex { position: [0.44147372, 0.2347359, 0.0], color: [0.5, 0.0, 0.5] },
+            Vertex { position: [-0.5, -0.5,  0.5], color: [0.5, 0.0, 0.5] },
+            Vertex { position: [-0.5,  0.5,  0.5], color: [0.0, 0.0, 0.5] },
+            Vertex { position: [ 0.5, -0.5,  0.5], color: [0.5, 0.0, 0.5] },
+            Vertex { position: [ 0.5,  0.5,  0.5], color: [0.5, 0.5, 0.5] },
+            Vertex { position: [-0.5, -0.5, -0.5], color: [0.5, 0.0, 0.5] },
+            Vertex { position: [-0.5,  0.5, -0.5], color: [0.5, 0.0, 0.5] },
+            Vertex { position: [ 0.5, -0.5, -0.5], color: [0.5, 0.0, 0.0] },
+            Vertex { position: [ 0.5,  0.5, -0.5], color: [0.5, 0.0, 0.5] },
         ];
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -54,9 +57,12 @@ impl Geometry {
         });
 
         let indices = vec![
-            0, 1, 4,
-            1, 2, 4,
-            2, 3, 4,
+            0, 1, 2, 1, 3, 2,
+            6, 7, 2, 7, 3, 2,
+            4, 5, 6, 5, 7, 6,
+            0, 1, 4, 1, 5, 4,
+            5, 1, 7, 1, 3, 7,
+            0, 4, 2, 4, 6, 2,
         ];
 
         let index_count = indices.len() as u32;

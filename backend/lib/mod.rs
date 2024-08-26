@@ -14,6 +14,7 @@ pub trait Harness {
     ) -> impl future::Future<Output = anyhow::Result<Self>> where Self: Sized;
     fn update(&mut self) -> anyhow::Result<()>;
     fn resize(&mut self, size: PhysicalSize<u32>);
+    fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool;
 }
 
 pub struct App<T, H: Harness<Config = T>> {
@@ -70,14 +71,15 @@ impl<T, H: Harness<Config = T>> App<T, H> {
             event: winit::event::Event<()>,
             event_target: &winit::event_loop::EventLoopWindowTarget<()>,
         ) -> anyhow::Result<()> {
-            use winit::event::{WindowEvent, KeyEvent, ElementState};
+            use winit::event::{Event, WindowEvent, KeyEvent, ElementState};
 
             use winit::keyboard::{Key, NamedKey};
 
             match event {
-                winit::event::Event::WindowEvent { event, window_id, .. } 
-                    if window_id == window.id() => {
-
+                Event::WindowEvent { 
+                    event, 
+                    window_id, .. 
+                } if window_id == window.id() => {
                     match event {
                         WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
                             event: KeyEvent {
@@ -90,15 +92,27 @@ impl<T, H: Harness<Config = T>> App<T, H> {
                                 .lock()
                                 .map_err(|_| io::Error::from(io::ErrorKind::Other))?
                                 .resize(physical_size);
+
+                            window.request_redraw();
                         },
                         WindowEvent::RedrawRequested => {
                             inner
                                 .lock()
                                 .map_err(|_| io::Error::from(io::ErrorKind::Other))?
-                                .update()?
+                                .update()?;
                         },
                         _ => { /*  */ },
-                    }},
+                    }
+                },
+                Event::DeviceEvent { event, .. } => {
+                    log::warn!("testing");
+                    let should_update = inner
+                        .lock()
+                        .map_err(|_| io::Error::from(io::ErrorKind::Other))?
+                        .handle_event(event);
+
+                    if should_update { window.request_redraw(); }
+                },
                 _ => { /*  */ },
             }
 

@@ -1,7 +1,10 @@
 mod shaders;
 mod vertex;
+mod camera;
 
-use winit::dpi;
+use std::mem;
+
+use winit::{dpi, event};
 
 #[derive(Clone, Copy)]
 pub struct GlobeConfig {
@@ -30,6 +33,9 @@ pub struct Globe {
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
     geometry: vertex::Geometry,
+    camera: camera::Camera,
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group: wgpu::BindGroup,
     pipeline: wgpu::RenderPipeline,
 }
 
@@ -40,6 +46,7 @@ impl backend::Harness for Globe {
         config: Self::Config, 
         #[allow(unused_variables)]
         assets: std::collections::HashMap<&'a str, &'a [u8]>,
+        #[allow(unused_variables)]
         window: &winit::window::Window,
     ) -> anyhow::Result<Self> where Self: Sized {
         let Self::Config { 
@@ -50,7 +57,7 @@ impl backend::Harness for Globe {
         } = config;
 
         fn create_surface_target(
-            window: &winit::window::Window
+            #[allow(unused_variables)] window: &winit::window::Window,
         ) -> anyhow::Result<wgpu::SurfaceTargetUnsafe> {
             #[cfg(target_arch="wasm32")] {
                 use wgpu::rwh;
@@ -125,10 +132,48 @@ impl backend::Harness for Globe {
         // Configure the surface (no longer platform-specific)
         surface.configure(&device, &surface_config);
 
+        let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: mem::size_of::<camera::CameraUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let camera_bind_group_layout = device.create_bind_group_layout(&{
+            wgpu::BindGroupLayoutDescriptor {
+                label: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }
+                ],
+            }
+        });
+
+        let camera_bind_group = device.create_bind_group(&{
+            wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &camera_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: camera_buffer.as_entire_binding(),
+                    }
+                ],
+            }
+        });
+
         let pipeline_layout = device.create_pipeline_layout(&{
             wgpu::PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&camera_bind_group_layout],
                 push_constant_ranges: &[],
             }
         });
@@ -167,7 +212,7 @@ impl backend::Harness for Globe {
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
+                    front_face: wgpu::FrontFace::Cw,
                     cull_mode: Some(wgpu::Face::Back),
                     unclipped_depth: false,
                     polygon_mode: wgpu::PolygonMode::Fill,
@@ -184,6 +229,9 @@ impl backend::Harness for Globe {
             surface,
             surface_config,
             geometry,
+            camera: camera::Camera::new(5., 1.), // TODO: `aspect` must change on resize
+            camera_buffer,
+            camera_bind_group,
             pipeline,
         })
     }
@@ -194,8 +242,6 @@ impl backend::Harness for Globe {
             surface,
             surface_config, .. 
         } = self;
-
-        log::info!("resized to {:?}", size); // TODO
 
         surface_config.width = size.width;
         surface_config.height = size.height;
@@ -209,12 +255,21 @@ impl backend::Harness for Globe {
             queue,
             surface, 
             pipeline, 
+            camera,
+            camera_buffer,
+            camera_bind_group,
             geometry: vertex::Geometry {
                 vertex_buffer,
                 index_count,
                 index_buffer, ..
             }, ..
         } = self;
+
+        queue.write_buffer(
+            camera_buffer, 
+            0, 
+            bytemuck::cast_slice(&[camera.update().build_camera_uniform()])
+        );
 
         let output = surface.get_current_texture()?;
 
@@ -254,6 +309,9 @@ impl backend::Harness for Globe {
             // set vertex buffer
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
+            // bind camera
+            pass.set_bind_group(0, camera_bind_group, &[]);
+
             // draw
             pass.draw_indexed(0..*index_count, 0, 0..1);
         }
@@ -265,5 +323,9 @@ impl backend::Harness for Globe {
         output.present();
 
         Ok(())
+    }
+    
+    fn handle_event(&mut self, event: event::DeviceEvent) -> bool {
+        self.camera.handle_event(event)
     }
 }
