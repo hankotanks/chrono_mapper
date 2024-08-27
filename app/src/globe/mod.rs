@@ -2,7 +2,7 @@ mod shaders;
 mod vertex;
 mod camera;
 
-use std::mem;
+use std::{mem, sync};
 
 use winit::{dpi, event};
 
@@ -47,7 +47,7 @@ impl backend::Harness for Globe {
         #[allow(unused_variables)]
         assets: std::collections::HashMap<&'a str, &'a [u8]>,
         #[allow(unused_variables)]
-        window: &winit::window::Window,
+        window: sync::Arc<winit::window::Window>,
     ) -> anyhow::Result<Self> where Self: Sized {
         let Self::Config { 
             format, 
@@ -56,37 +56,37 @@ impl backend::Harness for Globe {
             shader_asset_path,
         } = config;
 
-        fn create_surface_target(
-            #[allow(unused_variables)] window: &winit::window::Window,
-        ) -> anyhow::Result<wgpu::SurfaceTargetUnsafe> {
+        fn create_surface_target<'a>(
+            #[allow(unused_variables)] window: sync::Arc<winit::window::Window>,
+        ) -> anyhow::Result<wgpu::SurfaceTarget<'a>> {
             #[cfg(target_arch="wasm32")] {
-                use wgpu::rwh;
-        
-                let target = wgpu::SurfaceTargetUnsafe::RawHandle { 
-                    raw_display_handle: rwh::RawDisplayHandle::Web({
-                        rwh::WebDisplayHandle::new()
-                    }),
-                    raw_window_handle: rwh::RawWindowHandle::Web({
-                        // NOTE: This id is hard-coded
-                        rwh::WebWindowHandle::new(2024)
-                    }),
-                };
+                use wasm_bindgen::JsCast as _;
 
-                Ok(target)
+                let window = web_sys::window().expect("no global `window` exists");
+                let document = window.document().expect("should have a document on window");
+                let canvas = document
+                    .get_element_by_id("screen")
+                    .unwrap();
+
+                let handle = canvas.dyn_into::<web_sys::HtmlCanvasElement>()
+                    .expect("element must be a canvas");
+
+                Ok(wgpu::SurfaceTarget::Canvas(handle))
             }
             
-            #[cfg(not(target_arch = "wasm32"))] unsafe {
-                Ok(wgpu::SurfaceTargetUnsafe::from_window(&window)?)
+            #[cfg(not(target_arch = "wasm32"))] {
+                Ok(wgpu::SurfaceTarget::Window(Box::new(window)))
             }
         }
 
-        let instance = wgpu::Instance::default();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..wgpu::InstanceDescriptor::default()
+        });
 
-        let surface = unsafe {
-            let target = create_surface_target(window)?;
-
-            instance.create_surface_unsafe(target)?
-        };
+        let surface = instance.create_surface({
+            create_surface_target(sync::Arc::clone(&window))?
+        })?;
 
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
@@ -145,7 +145,7 @@ impl backend::Harness for Globe {
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
@@ -285,7 +285,7 @@ impl backend::Harness for Globe {
                 view: &view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
+                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0., g: 0., b: 1., a: 0. }),
                     store: wgpu::StoreOp::Store,
                 },
             };
