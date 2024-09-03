@@ -86,15 +86,11 @@ dependencies = [
  "anyhow",
  "backend",
  "bytemuck",
- "console_error_panic_hook",
  "log",
  "pollster",
- "simple_logger",
  "ultraviolet",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-logger",
- "web-sys",
  "wgpu",
  "winit",
 ]
@@ -143,8 +139,14 @@ name = "backend"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "console_error_panic_hook",
  "log",
+ "simple_logger",
  "static-files",
+ "wasm-bindgen",
+ "wasm-logger",
+ "web-sys",
+ "wgpu",
  "winit",
 ]
 

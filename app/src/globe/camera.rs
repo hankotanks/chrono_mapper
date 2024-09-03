@@ -100,7 +100,7 @@ impl Camera {
             ultraviolet::Vec3::from(up),
         );
 
-        let proj = ultraviolet::projection::perspective_vk(
+        let proj = ultraviolet::projection::rh_ydown::perspective_gl(
             *fovy,
             *aspect,
             *znear,

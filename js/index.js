@@ -8,6 +8,8 @@ const exec = async () => {
         Wrapper.update_canvas(String(window.innerWidth), String(window.innerHeight));
     };
 
+    resizeCanvas();
+
     let sinceLastResize;
     window.onresize = _ => {
         clearTimeout(sinceLastResize);

@@ -26,7 +26,7 @@ pub struct Geometry {
     pub vertex_buffer: wgpu::Buffer,
 
     #[allow(dead_code)]
-    pub indices: Vec<u16>,
+    pub indices: Vec<u32>,
     pub index_count: u32,
     pub index_buffer: wgpu::Buffer,
 }
