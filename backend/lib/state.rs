@@ -32,34 +32,27 @@ pub mod err {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 fn surface_config_update(
     config: &mut wgpu::SurfaceConfiguration, 
     limits: wgpu::Limits,
     size: winit::dpi::PhysicalSize<u32>,
 ) {
-    fn nearest_power_of_two(n: u32) -> u32 {
-        // Special case for zero
+    fn nearest_power_of_two(mut n: u32) -> u32 {
         if n == 0 {
-            return 1;
+            1
+        } else if n & (n - 1) == 0 {
+            n
+        } else {
+            n -= 1;
+            n |= n >> 1;
+            n |= n >> 2;
+            n |= n >> 4;
+            n |= n >> 8;
+            n |= n >> 16;
+            n += 1;
+            n >> 1
         }
-    
-        // Check if n is already a power of 2
-        if n & (n - 1) == 0 {
-            return n;
-        }
-    
-        // Calculate the higher power of 2
-        let mut higher = n;
-        higher -= 1;
-        higher |= higher >> 1;
-        higher |= higher >> 2;
-        higher |= higher >> 4;
-        higher |= higher >> 8;
-        higher |= higher >> 16;
-        higher += 1;
-    
-        // Calculate the lower power of 2
-        higher >> 1
     }
 
     let wgpu::SurfaceConfiguration {
@@ -72,6 +65,22 @@ fn surface_config_update(
 
     *height = nearest_power_of_two(size.height)
         .clamp(1, limits.max_texture_dimension_2d);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn surface_config_update(
+    config: &mut wgpu::SurfaceConfiguration, 
+    limits: wgpu::Limits,
+    size: winit::dpi::PhysicalSize<u32>,
+) {
+    let wgpu::SurfaceConfiguration {
+        width,
+        height, ..
+    } = config;
+
+    *width = size.width.clamp(1, limits.max_texture_dimension_2d);
+
+    *height = size.height.clamp(1, limits.max_texture_dimension_2d);
 }
 
 pub struct State<'a> {
@@ -131,7 +140,7 @@ impl<'a> State<'a> {
         }
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::GL,
+            backends: wgpu::Backends::all(),
             ..wgpu::InstanceDescriptor::default()
         });
 
@@ -215,7 +224,7 @@ impl<'a> State<'a> {
         &mut self, 
         event: winit::event::Event<()>,
         event_target: &winit::event_loop::EventLoopWindowTarget<()>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<winit::dpi::PhysicalSize<u32>>> {
         use winit::event::{Event, WindowEvent, KeyEvent, ElementState};
 
         use winit::keyboard::{Key, NamedKey};
@@ -250,6 +259,11 @@ impl<'a> State<'a> {
                         surface.configure(device, surface_config);
 
                         window.request_redraw();
+
+                        return Ok(Some(winit::dpi::PhysicalSize {
+                            width: surface_config.width,
+                            height: surface_config.height,
+                        }))
                     },
                     _ => { /*  */ },
                 }
@@ -257,10 +271,10 @@ impl<'a> State<'a> {
             _ => { /*  */ },
         }
 
-        Ok(())
+        Ok(None)
     }
 
-    pub fn submit_command_encoder<F>(&self, mut op: F) -> anyhow::Result<()> 
+    pub fn process_encoder<F>(&self, mut op: F) -> anyhow::Result<()> 
         where F: FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView) -> anyhow::Result<()> {
 
         let Self {

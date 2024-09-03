@@ -215,4 +215,8 @@ impl backend::Harness for Globe {
     fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool {
         self.camera.handle_event(event)
     }
+    
+    fn handle_resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
+        self.camera.handle_resize(size);
+    }
 }

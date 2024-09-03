@@ -83,6 +83,10 @@ impl Camera {
         }
     }
 
+    pub fn handle_resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
+        self.aspect = (size.width as f32) / (size.height as f32);
+    }
+
     pub fn build_camera_uniform(&self) -> CameraUniform {
         let Self {
             eye,

@@ -22,6 +22,8 @@ pub trait Harness {
     ) -> anyhow::Result<()>;
 
     fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool;
+
+    fn handle_resize(&mut self, size: winit::dpi::PhysicalSize<u32>);
 }
 
 pub struct App<'a, T, H: Harness<Config = T>> {
@@ -107,12 +109,19 @@ impl<'a, T, H: Harness<Config = T>> App<'a, T, H> {
         event_loop.run(move |event, event_target| {
             use winit::event::{Event, WindowEvent};
 
-            if let Some(size) = unsafe { VIEWPORT.take() } {
-                state.resize(size);
+            if let Some(physical_size) = unsafe { VIEWPORT.take() } {
+                state.resize(physical_size);
+
+                inner.handle_resize(winit::dpi::PhysicalSize {
+                    width: state.surface_config.width,
+                    height: state.surface_config.height,
+                });
             }
 
             match event {
-                Event::DeviceEvent { event, .. } => {
+                Event::DeviceEvent { 
+                    event, .. 
+                } if state.window.has_focus() => {
                     if inner.handle_event(event) {
                         state.window.request_redraw();
                     }
@@ -123,20 +132,22 @@ impl<'a, T, H: Harness<Config = T>> App<'a, T, H> {
                 } if window_id == state.window.id() => {
                     inner.update(&state.queue);
 
-                    if let Err(e) = state.submit_command_encoder({
-                        |encoder, view| inner.submit_passes(encoder, view)
+                    if let Err(e) = state.process_encoder(|encoder, view| {
+                        inner.submit_passes(encoder, view) 
                     }) {
                         let _ = err_inner.get_or_init(|| e);
 
                         event_target.exit();
                     }
                 },
-                event => {
-                    if let Err(e) = state.run(event, event_target) {
+                event => match state.run(event, event_target) {
+                    Ok(Some(size)) => inner.handle_resize(size),
+                    Ok(None) => { /*  */ },
+                    Err(e) => {
                         let _ = err_inner.get_or_init(|| e);
         
                         event_target.exit();
-                    }
+                    },
                 },
             }
         }).map_err(|e| e.to_string())?;
