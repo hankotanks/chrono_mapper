@@ -33,37 +33,74 @@ pub struct Geometry {
 
 impl Geometry {
     pub fn generate(
-        _slices: u32,
-        _stacks: u32,
+        slices: u32,
+        stacks: u32,
         device: &wgpu::Device,
     ) -> Self {
         use wgpu::util::DeviceExt as _;
 
-        let vertices = vec![
-            Vertex { position: [-0.5, -0.5,  0.5], color: [0.5, 0.0, 0.5] },
-            Vertex { position: [-0.5,  0.5,  0.5], color: [0.0, 0.0, 0.5] },
-            Vertex { position: [ 0.5, -0.5,  0.5], color: [0.5, 0.0, 0.5] },
-            Vertex { position: [ 0.5,  0.5,  0.5], color: [0.5, 0.5, 0.5] },
-            Vertex { position: [-0.5, -0.5, -0.5], color: [0.5, 0.0, 0.5] },
-            Vertex { position: [-0.5,  0.5, -0.5], color: [0.5, 0.0, 0.5] },
-            Vertex { position: [ 0.5, -0.5, -0.5], color: [0.5, 0.0, 0.0] },
-            Vertex { position: [ 0.5,  0.5, -0.5], color: [0.5, 0.0, 0.5] },
+        const PI: f32 = std::f32::consts::PI;
+
+        let mut vertices = vec![
+            Vertex { position: [0., 1., 0.], color: [0.5, 0., 0.] },
         ];
+
+        for i in 0..(stacks - 1) {
+            let phi = PI * (i + 1) as f32 / stacks as f32;
+
+            for j in 0..slices {
+                let theta = 2. * PI * j as f32 / slices as f32;
+
+                vertices.push(Vertex {
+                    position: [
+                        phi.sin() * theta.cos(),
+                        phi.cos(),
+                        phi.sin() * theta.sin(),
+                    ],
+                    color: [0., 0.5, 0.],
+                });
+            }
+        }
+
+        vertices.push(Vertex {
+            position: [0., -1., 0.],
+            color: [0., 0., 5.],
+        });
+
+        let v0 = 0;
+        let v1 = vertices.len() as u32 - 1;
+
+        let mut indices = Vec::with_capacity(vertices.len());
+
+        for i in 0..slices {
+            let i0 = i + 1;
+            let i1 = (i0 % slices) + 1;
+            indices.extend([v0, i1, i0]);
+
+            let i0 = i + slices * (stacks - 2) + 1;
+            let i1 = (i + 1) % slices + slices * (stacks - 2) + 1;
+            indices.extend([v1, i0, i1]);
+        }
+
+        for j in 0..(stacks - 2) {
+            let j0 = j * slices + 1;
+            let j1 = (j + 1) * slices + 1;
+
+            for i in 0..slices {
+                let i0 = j0 + i;
+                let i1 = j0 + (i + 1) % slices;
+                let i2 = j1 + (i + 1) % slices;
+                let i3 = j1 + i;
+
+                indices.extend([i3, i0, i1, i1, i2, i3]);
+            }
+        }
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-
-        let indices = vec![
-            0, 1, 2, 1, 3, 2,
-            6, 7, 2, 7, 3, 2,
-            4, 5, 6, 5, 7, 6,
-            0, 1, 4, 1, 5, 4,
-            5, 1, 7, 1, 3, 7,
-            0, 4, 2, 4, 6, 2,
-        ];
 
         let index_count = indices.len() as u32;
 
