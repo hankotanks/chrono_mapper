@@ -19,25 +19,25 @@ impl Vertex {
 }
 
 pub struct Geometry {
-    #[allow(dead_code)]
-    pub vertices: Vec<Vertex>,
+    #[allow(dead_code)] pub vertices: Vec<Vertex>,
     pub vertex_buffer: wgpu::Buffer,
-
-    #[allow(dead_code)]
-    pub indices: Vec<u32>,
+    #[allow(dead_code)] pub indices: Vec<u32>,
     pub index_count: u32,
     pub index_buffer: wgpu::Buffer,
 }
 
 impl Geometry {
     pub fn generate(
+        device: &wgpu::Device,
         slices: u32,
         stacks: u32,
-        device: &wgpu::Device,
+        globe_radius: f32,
     ) -> Self {
         use wgpu::util::DeviceExt as _;
 
-        let mut vertices = vec![Vertex { pos: [0., 1., 0.] }];
+        let mut vertices = vec![Vertex { 
+            pos: [0., globe_radius, 0.] 
+        }];
 
         for i in 0..(stacks - 1) {
             let phi = (std::f32::consts::PI * (i + 1) as f32) / //
@@ -49,16 +49,16 @@ impl Geometry {
 
                 vertices.push(Vertex { 
                     pos: [
-                        phi.sin() * theta.cos(),
-                        phi.cos(),
-                        phi.sin() * theta.sin(),
+                        phi.sin() * theta.cos() * globe_radius,
+                        phi.cos() * globe_radius,
+                        phi.sin() * theta.sin() * globe_radius,
                     ],
                 });
             }
         }
 
         vertices.push(Vertex { 
-            pos: [0., -1., 0.] 
+            pos: [0., globe_radius * -1., 0.] 
         });
 
         let v0 = 0;

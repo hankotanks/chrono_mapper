@@ -9,6 +9,7 @@ pub struct GlobeConfig {
     format: wgpu::TextureFormat,
     slices: u32,
     stacks: u32,
+    globe_radius: f32,
     shader_asset_path: &'static str,
     basemap: &'static str,
     basemap_borders: winit::dpi::PhysicalSize<u32>,
@@ -22,11 +23,10 @@ impl Default for GlobeConfig {
             format: wgpu::TextureFormat::Rgba8Unorm,
             slices: 100,
             stacks: 100,
+            globe_radius: 1000.,
             shader_asset_path: "shaders::render",
-            basemap: "lambert.jpg",
-            basemap_borders: winit::dpi::PhysicalSize {
-                width: 8, height: 8,
-            }
+            basemap: "blue_marble_2048.tif", // https://visibleearth.nasa.gov/images/57752/blue-marble-land-surface-shallow-water-and-shaded-topography
+            basemap_borders: winit::dpi::PhysicalSize::default(),
         }
     }
 }
@@ -59,6 +59,7 @@ impl backend::Harness for Globe {
             format, 
             slices,
             stacks,
+            globe_radius,
             shader_asset_path,
             basemap,
             basemap_borders,
@@ -239,14 +240,20 @@ impl backend::Harness for Globe {
             }
         });
 
-        let geometry = vertex::Geometry::generate(slices, stacks, device);
+        // generate the globe for later
+        let geometry = vertex::Geometry::generate(
+            device, 
+            slices, 
+            stacks,
+            globe_radius,
+        );
 
         Ok(Self {
             geometry,
             basemap_data: Some(basemap_data),
             texture,
             texture_bind_group,
-            camera: camera::Camera::new(5., 1.),
+            camera: camera::Camera::new(globe_radius * 1.5, 1.),
             camera_buffer,
             camera_bind_group,
             pipeline,

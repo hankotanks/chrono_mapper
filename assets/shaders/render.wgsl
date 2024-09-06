@@ -49,9 +49,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let diffuse = max(dot(light_dir, in.normal), 0.0);
 
+    let pos = normalize(in.pos_world);
     let tex: vec2<f32> = vec2<f32>(
-        (atan2(in.pos_world.x, in.pos_world.z) / PI + 1.0) / 2.0,
-        asin(in.pos_world.y) / PI + 0.5,
+        (atan2(pos.x, pos.z) / PI + 1.0) / 2.0, asin(pos.y) / PI + 0.5,
     );
 
     let color = textureSample(mercator, mercator_sampler, tex).xyz * //
