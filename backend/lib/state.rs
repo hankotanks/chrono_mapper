@@ -95,6 +95,7 @@ pub struct State<'a> {
 impl<'a> State<'a> {
     pub async fn new(
         event_loop: &winit::event_loop::EventLoop<()>,
+        surface_format: wgpu::TextureFormat,
     ) -> anyhow::Result<Self> {
         #[allow(non_snake_case)]
         let LIMITS = wgpu::Limits::downlevel_webgl2_defaults();
@@ -175,12 +176,12 @@ impl<'a> State<'a> {
         // Construct the surface configuration
         let mut surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: surface_format,
             width: 0,
             height: 0,
             present_mode: present_modes[0],
             alpha_mode: alpha_modes[0],
-            view_formats: vec![wgpu::TextureFormat::Rgba8Unorm],
+            view_formats: vec![surface_format],
             desired_maximum_frame_latency: 1,
         };
 

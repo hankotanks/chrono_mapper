@@ -5,7 +5,7 @@ mod state;
 use std::{cell, collections, future, rc};
 
 pub trait Harness {
-    type Config: Copy;
+    type Config: HarnessConfig;
 
     fn new<'b>(
         config: Self::Config,
@@ -26,13 +26,17 @@ pub trait Harness {
     fn handle_resize(&mut self, size: winit::dpi::PhysicalSize<u32>);
 }
 
-pub struct App<'a, T, H: Harness<Config = T>> {
+pub trait HarnessConfig: Copy {
+    fn surface_format(self) -> wgpu::TextureFormat;
+}
+
+pub struct App<'a, T: HarnessConfig, H: Harness<Config = T>> {
     state: state::State<'a>,
     inner: H,
     event_loop: winit::event_loop::EventLoop<()>,
 }
 
-impl<'a, T, H: Harness<Config = T>> App<'a, T, H> {
+impl<'a, T: HarnessConfig, H: Harness<Config = T>> App<'a, T, H> {
     pub async fn new(
         config: T,
     ) -> Result<Self, String> where Self: Sized {
@@ -48,23 +52,23 @@ impl<'a, T, H: Harness<Config = T>> App<'a, T, H> {
                 .unwrap();
         }
 
-        async fn new_inner<'a, T, H: Harness<Config = T>>(
+        async fn new_inner<'a, T: HarnessConfig, H: Harness<Config = T>>(
             config: T
         ) -> anyhow::Result<App<'a, T, H>> {
             let mut assets = collections::HashMap::new();
             for (tag, asset) in generate().into_iter() {
                 assets.insert(tag, asset.data);
             }
+
+            log::warn!("{:#?}", assets.keys().collect::<Vec<_>>());
             
             let event_loop = winit::event_loop::EventLoop::new()?;
-    
+
             let state = {
-                state::State::new(&event_loop).await
+                state::State::new(&event_loop, config.surface_format()).await
             }?;
     
-            let inner = {
-                H::new(config, &state.device, assets).await
-            }?;
+            let inner = (H::new(config, &state.device, assets).await)?;
     
             Ok(App { state, inner, event_loop })
         }

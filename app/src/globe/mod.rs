@@ -1,6 +1,8 @@
-mod shaders;
 mod vertex;
+mod util;
 mod camera;
+
+use std::io;
 
 #[derive(Clone, Copy)]
 pub struct GlobeConfig {
@@ -8,6 +10,8 @@ pub struct GlobeConfig {
     slices: u32,
     stacks: u32,
     shader_asset_path: &'static str,
+    basemap: &'static str,
+    basemap_borders: winit::dpi::PhysicalSize<u32>,
 }
 
 // TODO: GlobeConfig should not implement Default
@@ -16,15 +20,26 @@ impl Default for GlobeConfig {
     fn default() -> Self {
         Self { 
             format: wgpu::TextureFormat::Rgba8Unorm,
-            slices: 20,
-            stacks: 20,
+            slices: 100,
+            stacks: 100,
             shader_asset_path: "shaders::render",
+            basemap: "lambert.jpg",
+            basemap_borders: winit::dpi::PhysicalSize {
+                width: 8, height: 8,
+            }
         }
     }
 }
 
+impl backend::HarnessConfig for GlobeConfig {
+    fn surface_format(self) -> wgpu::TextureFormat { self.format }
+}
+
 pub struct Globe {
     geometry: vertex::Geometry,
+    basemap_data: Option<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>>,
+    texture: wgpu::Texture,
+    texture_bind_group: wgpu::BindGroup,
     camera: camera::Camera,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -45,7 +60,99 @@ impl backend::Harness for Globe {
             slices,
             stacks,
             shader_asset_path,
+            basemap,
+            basemap_borders,
         } = config;
+
+        let bytes = assets
+            .get(basemap.replace("::", "/").as_str())
+            .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
+
+        let basemap_data = image::load_from_memory(bytes)
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?
+            .to_rgba8();
+
+        let basemap_data: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> = {
+            use image::GenericImageView as _;
+
+            let winit::dpi::PhysicalSize { width, height } = basemap_borders;
+
+            basemap_data.view(
+                width, 
+                height, 
+                basemap_data.width() - width * 2, 
+                basemap_data.height() - height * 2,
+            ).to_image()
+        };
+
+        let texture = device.create_texture(&{
+            wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d {
+                    width: basemap_data.width(),
+                    height: basemap_data.height(),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[format],
+            }
+        });
+
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::MirrorRepeat,
+            address_mode_v: wgpu::AddressMode::MirrorRepeat,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest, ..Default::default()
+        });
+
+        let texture_bind_group_layout = device.create_bind_group_layout(&{
+            wgpu::BindGroupLayoutDescriptor {
+                label: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    }
+                ],
+            }
+        });
+
+        let texture_bind_group = device.create_bind_group(&{
+            wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&{
+                            texture.create_view(&wgpu::TextureViewDescriptor::default())
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&texture_sampler),
+                    }
+                ],
+            }
+        });
 
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -57,18 +164,16 @@ impl backend::Harness for Globe {
         let camera_bind_group_layout = device.create_bind_group_layout(&{
             wgpu::BindGroupLayoutDescriptor {
                 label: None,
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    }
-                ],
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
             }
         });
 
@@ -76,25 +181,23 @@ impl backend::Harness for Globe {
             wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &camera_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: camera_buffer.as_entire_binding(),
-                    }
-                ],
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buffer.as_entire_binding(),
+                }],
             }
         });
 
         let pipeline_layout = device.create_pipeline_layout(&{
             wgpu::PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[&camera_bind_group_layout],
+                bind_group_layouts: &[&camera_bind_group_layout, &texture_bind_group_layout],
                 push_constant_ranges: &[],
             }
         });
 
         let pipeline_shader = device.create_shader_module({
-            shaders::load_shader(shader_asset_path, &assets)?
+            util::load_shader(&assets, shader_asset_path)?
         });
 
         let pipeline = device.create_render_pipeline(&{
@@ -140,6 +243,9 @@ impl backend::Harness for Globe {
 
         Ok(Self {
             geometry,
+            basemap_data: Some(basemap_data),
+            texture,
+            texture_bind_group,
             camera: camera::Camera::new(5., 1.),
             camera_buffer,
             camera_bind_group,
@@ -149,6 +255,8 @@ impl backend::Harness for Globe {
 
     fn update(&mut self, queue: &wgpu::Queue) {
         let Self {
+            basemap_data,
+            texture,
             camera,
             camera_buffer, ..
         } = self;
@@ -158,6 +266,31 @@ impl backend::Harness for Globe {
             0, 
             bytemuck::cast_slice(&[camera.update().build_camera_uniform()])
         );
+
+        if let Some(basemap_data) = basemap_data.take() {
+            queue.write_texture(
+                // Tells wgpu where to copy the pixel data
+                wgpu::ImageCopyTexture {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                // The actual pixel data
+                &basemap_data,
+                // The layout of the texture
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * basemap_data.width()),
+                    rows_per_image: Some(basemap_data.height()),
+                },
+                wgpu::Extent3d {
+                    width: basemap_data.width(),
+                    height: basemap_data.height(),
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
     
     fn submit_passes(
@@ -166,13 +299,14 @@ impl backend::Harness for Globe {
         surface: &wgpu::TextureView,
     ) -> anyhow::Result<()> {
         let Self {
-            pipeline, 
-            camera_bind_group,
             geometry: vertex::Geometry {
                 vertex_buffer,
                 index_count,
                 index_buffer, ..
-            }, ..
+            },
+            pipeline, 
+            texture_bind_group: tex_bind_group,
+            camera_bind_group, ..
         } = self;
 
         let color_attachment = wgpu::RenderPassColorAttachment {
@@ -205,6 +339,9 @@ impl backend::Harness for Globe {
 
         // bind camera
         pass.set_bind_group(0, camera_bind_group, &[]);
+
+        // bind mercator texture
+        pass.set_bind_group(1, tex_bind_group, &[]);
 
         // draw
         pass.draw_indexed(0..*index_count, 0, 0..1);

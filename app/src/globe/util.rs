@@ -1,8 +1,8 @@
 use std::{collections, io, str};
 
-pub(super) fn load_shader<'a>(
-    name: &str,
+pub fn load_shader<'a>(
     assets: &collections::HashMap<&'a str, &'a [u8]>,
+    name: &str,
 ) -> Result<wgpu::ShaderModuleDescriptor<'a>, io::Error> {
     fn as_asset_path(include: &str) -> String {
         let mut path = include.replace("::", "/");
