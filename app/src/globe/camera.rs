@@ -39,12 +39,20 @@ impl Camera {
             aspect: 1.,
             fovy: std::f32::consts::PI / 2.,
             znear: 0.1,
-            zfar: 1000.,
+            zfar: 20000.,
             locked: true,
         }
     }
 
     pub fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool {
+        let mult = ultraviolet::Vec3::from(self.eye).mag().abs() / //
+            self.globe_radius;
+
+        let mult_min = 1. + self.znear;
+        let mult_max = 1. + (2. / 3.);
+
+        let mult = (mult - mult_min) / (mult_max - mult_min) + mult_min - 1.;
+
         match event {
             winit::event::DeviceEvent::Button { button: 0, state, } => {
                 self.locked = matches!(
@@ -65,17 +73,13 @@ impl Camera {
                     }
                 };
 
-                let mult = ultraviolet::Vec3::from(self.eye).mag().abs() / //
-                    self.globe_radius;
-
-                let lower = scroll_amount <= 0. && //
-                    mult > (self.znear + 1.);
-                let upper = scroll_amount > 0. && //
-                    mult < (1. + 2. / 3.);
+                let lower = scroll_amount < 0. && mult > 0.0;
+                let upper = scroll_amount > 0. && mult < 1.0;
 
                 if lower || upper {
-                    let mult = std::f32::consts::E.powf(1. + mult);
-    
+                    let mult = std::f32::consts::E.powf(mult);
+                    let mult = mult * self.globe_radius * 0.01;
+
                     self.distance += scroll_amount * mult;
 
                     true
@@ -85,11 +89,8 @@ impl Camera {
             },
             winit::event::DeviceEvent::MouseMotion { delta: (x, y) } => {
                 if !self.locked {
-                    let mult = ultraviolet::Vec3::from(self.eye).mag().abs() / //
-                        self.globe_radius;
-                    let mult = (mult + 1.).ln() * self.globe_radius.recip();
+                    let mult = (((mult + 1.).ln()) * 0.0015).abs();
 
-                    // TODO: Drag should be true to the distance travelled across the sphere
                     self.pitch -= y as f32 * mult;
                     self.pitch = self.pitch.clamp(
                         -1.0 * std::f32::consts::PI / 2. + f32::EPSILON, 
