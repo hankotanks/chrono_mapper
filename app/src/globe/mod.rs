@@ -253,7 +253,7 @@ impl backend::Harness for Globe {
             basemap_data: Some(basemap_data),
             texture,
             texture_bind_group,
-            camera: camera::Camera::new(globe_radius * 1.5, 1.),
+            camera: camera::Camera::new(globe_radius),
             camera_buffer,
             camera_bind_group,
             pipeline,
@@ -276,16 +276,12 @@ impl backend::Harness for Globe {
 
         if let Some(basemap_data) = basemap_data.take() {
             queue.write_texture(
-                // Tells wgpu where to copy the pixel data
                 wgpu::ImageCopyTexture {
                     texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
-                },
-                // The actual pixel data
-                &basemap_data,
-                // The layout of the texture
+                }, &basemap_data,
                 wgpu::ImageDataLayout {
                     offset: 0,
                     bytes_per_row: Some(4 * basemap_data.width()),
@@ -360,7 +356,9 @@ impl backend::Harness for Globe {
         self.camera.handle_event(event)
     }
     
-    fn handle_resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
-        self.camera.handle_resize(size);
-    }
+    fn handle_resize(
+        &mut self,
+        size: winit::dpi::PhysicalSize<u32>,
+        scale: f32, 
+    ) { self.camera.handle_resize(size, scale); }
 }

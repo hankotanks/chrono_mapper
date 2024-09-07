@@ -9,6 +9,8 @@ pub struct CameraUniform {
 #[derive(Clone, Copy)]
 pub struct Camera {
     distance: f32,
+    globe_radius: f32,
+    scale: f32,
     pitch: f32,
     yaw: f32,
     eye: [f32; 3],
@@ -18,26 +20,26 @@ pub struct Camera {
     fovy: f32,
     znear: f32,
     zfar: f32,
-    speed_rotate: f32,
-    speed_zoom: f32,
     locked: bool,
 }
 
 impl Camera {
-    pub fn new(distance: f32, aspect: f32) -> Self {
+    pub fn new(globe_radius: f32) -> Self {
+        const DISTANCE_MULT: f32 = 1.5;
+
         Self {
-            distance,
+            distance: globe_radius * DISTANCE_MULT,
+            globe_radius,
+            scale: 1.,
             pitch: 0.,
             yaw: 0.,
-            eye: [0., 0., distance * -1.0],
+            eye: [0., 0., globe_radius * DISTANCE_MULT * -1.],
             target: [0.; 3],
             up: [0., 1., 0.],
-            aspect,
+            aspect: 1.,
             fovy: std::f32::consts::PI / 2.,
             znear: 0.1,
             zfar: 1000.,
-            speed_rotate: 0.01,
-            speed_zoom: 0.6,
             locked: true,
         }
     }
@@ -54,27 +56,47 @@ impl Camera {
             }
             winit::event::DeviceEvent::MouseWheel { delta, .. } => {
                 let scroll_amount = -match delta {
-                    // A mouse line is about 1 px.
                     winit::event::MouseScrollDelta::LineDelta(_, scroll) => //
                         scroll * 1.0,
                     winit::event::MouseScrollDelta::PixelDelta(
                         winit::dpi::PhysicalPosition { y: scroll, .. }
-                    ) => scroll as f32,
+                    ) => {
+                        (self.scale * scroll as f32) / 270.
+                    }
                 };
 
-                self.distance += scroll_amount * self.speed_zoom;
+                let mult = ultraviolet::Vec3::from(self.eye).mag().abs() / //
+                    self.globe_radius;
 
-                true
-            }
+                let lower = scroll_amount <= 0. && //
+                    mult > (self.znear + 1.);
+                let upper = scroll_amount > 0. && //
+                    mult < (1. + 2. / 3.);
+
+                if lower || upper {
+                    let mult = std::f32::consts::E.powf(1. + mult);
+    
+                    self.distance += scroll_amount * mult;
+
+                    true
+                } else {
+                    false
+                }
+            },
             winit::event::DeviceEvent::MouseMotion { delta: (x, y) } => {
                 if !self.locked {
-                    self.pitch -= y as f32 * self.speed_rotate;
+                    let mult = ultraviolet::Vec3::from(self.eye).mag().abs() / //
+                        self.globe_radius;
+                    let mult = (mult + 1.).ln() * self.globe_radius.recip();
+
+                    // TODO: Drag should be true to the distance travelled across the sphere
+                    self.pitch -= y as f32 * mult;
                     self.pitch = self.pitch.clamp(
                         -1.0 * std::f32::consts::PI / 2. + f32::EPSILON, 
                         std::f32::consts::PI / 2. - f32::EPSILON,
                     );
 
-                    self.yaw -= x as f32 * self.speed_rotate;
+                    self.yaw -= x as f32 * mult;
                 }
 
                 !self.locked
@@ -83,8 +105,14 @@ impl Camera {
         }
     }
 
-    pub fn handle_resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
+    pub fn handle_resize(
+        &mut self, 
+        size: winit::dpi::PhysicalSize<u32>,
+        scale: f32,
+    ) {
         self.aspect = (size.width as f32) / (size.height as f32);
+
+        self.scale = scale;
     }
 
     pub fn build_camera_uniform(&self) -> CameraUniform {

@@ -23,7 +23,11 @@ pub trait Harness {
 
     fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool;
 
-    fn handle_resize(&mut self, size: winit::dpi::PhysicalSize<u32>);
+    fn handle_resize(
+        &mut self, 
+        size: winit::dpi::PhysicalSize<u32>,
+        scale: f32,
+    );
 }
 
 pub trait HarnessConfig: Copy {
@@ -60,8 +64,6 @@ impl<'a, T: HarnessConfig, H: Harness<Config = T>> App<'a, T, H> {
                 assets.insert(tag, asset.data);
             }
 
-            log::warn!("{:#?}", assets.keys().collect::<Vec<_>>());
-            
             let event_loop = winit::event_loop::EventLoop::new()?;
 
             let state = {
@@ -116,10 +118,13 @@ impl<'a, T: HarnessConfig, H: Harness<Config = T>> App<'a, T, H> {
             if let Some(physical_size) = unsafe { VIEWPORT.take() } {
                 state.resize(physical_size);
 
-                inner.handle_resize(winit::dpi::PhysicalSize {
-                    width: state.surface_config.width,
-                    height: state.surface_config.height,
-                });
+                inner.handle_resize(
+                    winit::dpi::PhysicalSize {
+                        width: state.surface_config.width,
+                        height: state.surface_config.height,
+                    },
+                    state.window.scale_factor() as f32,
+                );
             }
 
             match event {
@@ -145,7 +150,9 @@ impl<'a, T: HarnessConfig, H: Harness<Config = T>> App<'a, T, H> {
                     }
                 },
                 event => match state.run(event, event_target) {
-                    Ok(Some(size)) => inner.handle_resize(size),
+                    Ok(Some(size)) => {
+                        inner.handle_resize(size, state.window.scale_factor() as f32);
+                    },
                     Ok(None) => { /*  */ },
                     Err(e) => {
                         let _ = err_inner.get_or_init(|| e);
