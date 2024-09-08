@@ -1,7 +1,4 @@
-struct CameraUniform {
-    eye: vec4<f32>,
-    view: mat4x4<f32>,
-};
+//include shaders::types::camera
 
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
@@ -19,18 +16,15 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position) 
-        pos_clip: vec4<f32>,
+    pos_clip: vec4<f32>,
     @location(0) 
-        pos_world: vec3<f32>,
+    pos_world: vec3<f32>,
     @location(1) 
-        normal: vec3<f32>,
+    normal: vec3<f32>,
 };
 
 @vertex
-fn vertex(
-    model: VertexInput,
-) -> VertexOutput {
-
+fn vertex(model: VertexInput) -> VertexOutput {
     var out: VertexOutput;
         out.pos_clip = camera.view * vec4<f32>(model.pos, 1.0);
         out.pos_world = model.pos;

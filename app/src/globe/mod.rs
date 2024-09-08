@@ -1,4 +1,4 @@
-mod vertex;
+mod geom;
 mod util;
 mod camera;
 
@@ -10,9 +10,11 @@ pub struct GlobeConfig {
     slices: u32,
     stacks: u32,
     globe_radius: f32,
-    shader_asset_path: &'static str,
+    globe_shader_asset_path: &'static str,
     basemap: &'static str,
     basemap_borders: winit::dpi::PhysicalSize<u32>,
+    features: &'static str,
+    features_shader_asset_path: &'static str,
 }
 
 // TODO: GlobeConfig should not implement Default
@@ -23,10 +25,12 @@ impl Default for GlobeConfig {
             format: wgpu::TextureFormat::Rgba8Unorm,
             slices: 100,
             stacks: 100,
-            globe_radius: 1000.,
-            shader_asset_path: "shaders::render",
+            globe_radius: 10000.,
+            globe_shader_asset_path: "shaders::globe",
             basemap: "blue_marble_2048.tif", // https://visibleearth.nasa.gov/images/57752/blue-marble-land-surface-shallow-water-and-shaded-topography
             basemap_borders: winit::dpi::PhysicalSize::default(),
+            features: "world_bc5000.geojson",
+            features_shader_asset_path: "shaders::features",
         }
     }
 }
@@ -36,14 +40,16 @@ impl backend::HarnessConfig for GlobeConfig {
 }
 
 pub struct Globe {
-    geometry: vertex::Geometry,
     basemap_data: Option<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>>,
     texture: wgpu::Texture,
     texture_bind_group: wgpu::BindGroup,
     camera: camera::Camera,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    pipeline: wgpu::RenderPipeline,
+    globe: geom::Geometry<geom::GlobeVertex>,
+    globe_pipeline: wgpu::RenderPipeline,
+    feature_geometry: geom::Geometry<geom::FeatureVertex>,
+    feature_pipeline: wgpu::RenderPipeline,
 }
 
 impl backend::Harness for Globe {
@@ -60,9 +66,11 @@ impl backend::Harness for Globe {
             slices,
             stacks,
             globe_radius,
-            shader_asset_path,
+            globe_shader_asset_path,
             basemap,
             basemap_borders,
+            features,
+            features_shader_asset_path,
         } = config;
 
         let bytes = assets
@@ -189,7 +197,15 @@ impl backend::Harness for Globe {
             }
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&{
+        // generate the globe for later
+        let globe = geom::build_globe_geometry(
+            device, 
+            slices, 
+            stacks,
+            globe_radius,
+        );
+
+        let globe_pipeline_layout = device.create_pipeline_layout(&{
             wgpu::PipelineLayoutDescriptor {
                 label: None,
                 bind_group_layouts: &[&camera_bind_group_layout, &texture_bind_group_layout],
@@ -197,21 +213,21 @@ impl backend::Harness for Globe {
             }
         });
 
-        let pipeline_shader = device.create_shader_module({
-            util::load_shader(&assets, shader_asset_path)?
+        let globe_pipeline_shader = device.create_shader_module({
+            util::load_shader(&assets, globe_shader_asset_path)?
         });
 
-        let pipeline = device.create_render_pipeline(&{
+        let globe_pipeline = device.create_render_pipeline(&{
             wgpu::RenderPipelineDescriptor {
                 label: None,
-                layout: Some(&pipeline_layout),
+                layout: Some(&globe_pipeline_layout),
                 vertex: wgpu::VertexState {
-                    module: &pipeline_shader,
+                    module: &globe_pipeline_shader,
                     entry_point: "vertex",
-                    buffers: &[vertex::Vertex::layout()],
+                    buffers: &[geom::GlobeVertex::layout()],
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &pipeline_shader,
+                    module: &globe_pipeline_shader,
                     entry_point: "fragment",
                     targets: &[
                         Some(wgpu::ColorTargetState {
@@ -240,23 +256,73 @@ impl backend::Harness for Globe {
             }
         });
 
-        // generate the globe for later
-        let geometry = vertex::Geometry::generate(
-            device, 
-            slices, 
-            stacks,
-            globe_radius,
+        let feature_geometry = util::load_features_from_geojson(&assets, features)?;
+        let feature_geometry = geom::build_feature_geometry(
+            device, &feature_geometry, globe_radius,
         );
 
+        let feature_pipeline_layout = device.create_pipeline_layout(&{
+            wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&camera_bind_group_layout],
+                push_constant_ranges: &[],
+            }
+        });
+
+        let feature_pipeline_shader = device.create_shader_module({
+            util::load_shader(&assets, features_shader_asset_path)?
+        });
+
+        let feature_pipeline = device.create_render_pipeline(&{
+            wgpu::RenderPipelineDescriptor {
+                label: None,
+                layout: Some(&feature_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &feature_pipeline_shader,
+                    entry_point: "vertex",
+                    buffers: &[geom::FeatureVertex::layout()],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &feature_pipeline_shader,
+                    entry_point: "fragment",
+                    targets: &[
+                        Some(wgpu::ColorTargetState {
+                            format,
+                            blend: Some(wgpu::BlendState::REPLACE),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })
+                    ],
+                }),
+                depth_stencil: None,
+                multiview: None,
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Cw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+            }
+        }); 
+
         Ok(Self {
-            geometry,
             basemap_data: Some(basemap_data),
             texture,
             texture_bind_group,
             camera: camera::Camera::new(globe_radius),
             camera_buffer,
             camera_bind_group,
-            pipeline,
+            globe,
+            globe_pipeline,
+            feature_geometry,
+            feature_pipeline,
         })
     }
 
@@ -300,16 +366,40 @@ impl backend::Harness for Globe {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         surface: &wgpu::TextureView,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<()> {       
+        self.submit_globe_pass(encoder, surface);
+
+        self.submit_feature_pass(encoder, surface);
+
+        Ok(())
+    }
+    
+    fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool {
+        self.camera.handle_event(event)
+    }
+    
+    fn handle_resize(
+        &mut self,
+        size: winit::dpi::PhysicalSize<u32>,
+        scale: f32, 
+    ) { self.camera.handle_resize(size, scale); }
+}
+
+impl Globe {
+    fn submit_globe_pass(
+        &self, 
+        encoder: &mut wgpu::CommandEncoder,
+        surface: &wgpu::TextureView,
+    ) {
         let Self {
-            geometry: vertex::Geometry {
+            texture_bind_group,
+            camera_bind_group,
+            globe: geom::Geometry {
                 vertex_buffer,
-                index_count,
+                indices,
                 index_buffer, ..
             },
-            pipeline, 
-            texture_bind_group: tex_bind_group,
-            camera_bind_group, ..
+            globe_pipeline, ..
         } = self;
 
         let color_attachment = wgpu::RenderPassColorAttachment {
@@ -329,7 +419,7 @@ impl backend::Harness for Globe {
         });
 
         // bind render pipeline
-        pass.set_pipeline(pipeline);
+        pass.set_pipeline(globe_pipeline);
 
         // set index buffer
         pass.set_index_buffer(
@@ -344,21 +434,58 @@ impl backend::Harness for Globe {
         pass.set_bind_group(0, camera_bind_group, &[]);
 
         // bind mercator texture
-        pass.set_bind_group(1, tex_bind_group, &[]);
+        pass.set_bind_group(1, texture_bind_group, &[]);
 
         // draw
-        pass.draw_indexed(0..*index_count, 0, 0..1);
+        pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
+    }
 
-        Ok(())
+    fn submit_feature_pass(
+        &self, 
+        encoder: &mut wgpu::CommandEncoder,
+        surface: &wgpu::TextureView,
+    ) {
+        let Self {
+            camera_bind_group,
+            feature_geometry: geom::Geometry {
+                vertex_buffer,
+                indices,
+                index_buffer, ..
+            },
+            feature_pipeline, ..
+        } = self;
+
+        let color_attachment = wgpu::RenderPassColorAttachment {
+            view: surface,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        };
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(color_attachment)],
+            depth_stencil_attachment: None,
+            ..Default::default()
+        });
+
+        pass.set_pipeline(feature_pipeline);
+
+        // set index buffer
+        pass.set_index_buffer(
+            index_buffer.slice(..), 
+            wgpu::IndexFormat::Uint32,
+        );
+
+        // set vertex buffer
+        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+
+        // bind camera
+        pass.set_bind_group(0, camera_bind_group, &[]);
+
+        // draw
+        pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
     }
-    
-    fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool {
-        self.camera.handle_event(event)
-    }
-    
-    fn handle_resize(
-        &mut self,
-        size: winit::dpi::PhysicalSize<u32>,
-        scale: f32, 
-    ) { self.camera.handle_resize(size, scale); }
 }

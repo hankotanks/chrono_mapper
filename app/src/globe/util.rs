@@ -1,4 +1,5 @@
-use std::{collections, io, str};
+use core::str;
+use std::{collections, io};
 
 pub fn load_shader<'a>(
     assets: &collections::HashMap<&'a str, &'a [u8]>,
@@ -47,4 +48,20 @@ pub fn load_shader<'a>(
             load_shader_inner(&as_asset_path(name), assets)?.into()
         }),
 	})
+}
+
+#[allow(dead_code)]
+pub fn load_features_from_geojson<'a>(
+    assets: &collections::HashMap<&'a str, &'a [u8]>,
+    name: &'a str,
+) -> anyhow::Result<Vec<geojson::Feature>> {
+    let data = assets
+        .get(name)
+        .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
+
+    let features = str::from_utf8(data)?.parse::<geojson::GeoJson>()?;
+
+    let collection = geojson::FeatureCollection::try_from(features)?.features;
+
+    Ok(collection)
 }
