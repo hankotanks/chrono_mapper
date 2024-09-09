@@ -20,7 +20,7 @@ struct VertexOutput {
 @vertex
 fn vertex(model: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-        out.pos_clip = vec4<f32>(model.pos, 1.0);//camera.view * vec4<f32>(model.pos, 1.0);
+        out.pos_clip = camera.view * vec4<f32>(model.pos, 1.0);
         out.color = model.color;
 
     return out;

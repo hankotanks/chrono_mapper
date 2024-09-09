@@ -137,7 +137,7 @@ pub fn build_globe_geometry(
 pub fn build_feature_geometry(
     device: &wgpu::Device,
     features: &[geojson::Feature],
-    _globe_radius: f32,
+    globe_radius: f32,
 ) -> Geometry<FeatureVertex> {
     use wgpu::util::DeviceExt as _;
 
@@ -145,7 +145,17 @@ pub fn build_feature_geometry(
 
     let mut indices = Vec::new();
 
-    for geometry in features.iter().filter_map(|f| f.geometry.as_ref()) {
+    fn validate_feature(f: &geojson::Feature) -> Option<&geojson::Geometry> {
+        let geojson::Feature { geometry, properties, .. } = f;
+
+        match properties {
+            Some(properties) if properties.contains_key("NAME") => {
+                geometry.as_ref()
+            }, _ => None,
+        }
+    }
+
+    for geometry in features.iter().filter_map(validate_feature) {
         let geojson::Geometry { value, .. } = geometry;
 
         if let geojson::Value::MultiPolygon(polygons) = value {
@@ -157,7 +167,7 @@ pub fn build_feature_geometry(
                             x: vertex[0], y: vertex[1],
                         }).collect::<Vec<_>>();
 
-                    let offset = indices.len();
+                    let offset = vertices.len();
                     indices.extend({
                         delaunator::triangulate(points.as_slice())
                             .triangles
@@ -165,13 +175,30 @@ pub fn build_feature_geometry(
                             .map(|index| (index + offset) as u32)
                     });
 
+                    let color = random_color::RandomColor::new()
+                        .to_rgb_array();
+
+                    let color = [
+                        color[0] as f32 / 255., 
+                        color[1] as f32 / 255., 
+                        color[2] as f32 / 255.,
+                    ];
+
                     vertices.extend({
                         points
                             .into_iter()
                             .map(|delaunator::Point { x, y }| {
+                                use core::f32;
+
+                                let lat = (x as f32 / 180.) * f32::consts::PI;
+                                let lon = (y as f32 / 180.) * f32::consts::PI;
+
                                 FeatureVertex {
-                                    pos: [x as f32 / 180., y as f32 / 90., 0.], // TODO
-                                    color: [1.; 3],
+                                    pos: [
+                                        lat.cos() * lon.cos() * globe_radius, 
+                                        lat.cos() * lon.sin() * globe_radius, 
+                                        lat.sin() * globe_radius,
+                                    ], color,
                                 }
                             })
                     });
@@ -179,8 +206,6 @@ pub fn build_feature_geometry(
             }
         }
     }
-
-    println!("{}", indices.len());
 
     let vertex_buffer = device.create_buffer_init(&{
         wgpu::util::BufferInitDescriptor {

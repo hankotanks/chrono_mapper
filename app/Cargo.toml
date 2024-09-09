@@ -23,6 +23,7 @@ winit = { workspace = true }
 ultraviolet = { version = "0.9.2", features = ["bytemuck"] }
 geojson = "0.24.1"
 delaunator = "1.0.2"
+random_color = "0.8.0"
 
 [dependencies.image]
 version = "0.24"

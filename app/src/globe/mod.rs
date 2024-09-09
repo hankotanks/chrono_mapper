@@ -29,7 +29,7 @@ impl Default for GlobeConfig {
             globe_shader_asset_path: "shaders::globe",
             basemap: "blue_marble_2048.tif", // https://visibleearth.nasa.gov/images/57752/blue-marble-land-surface-shallow-water-and-shaded-topography
             basemap_borders: winit::dpi::PhysicalSize::default(),
-            features: "world_bc5000.geojson",
+            features: "world_2010.geojson",
             features_shader_asset_path: "shaders::features",
         }
     }
