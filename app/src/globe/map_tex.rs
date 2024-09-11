@@ -1,3 +1,5 @@
+use crate::globe::util;
+
 pub struct Basemap {
     pub buffer: image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
     pub buffer_size: winit::dpi::PhysicalSize<u32>,
@@ -30,19 +32,7 @@ impl Basemap {
         mut self, 
         features: Vec<geojson::Feature>,
     ) -> Self {
-        fn validate_feature(f: &geojson::Feature) -> Option<&geojson::Geometry> {
-            let geojson::Feature { geometry, properties, .. } = f;
-
-            match properties {
-                Some(properties)  => match properties.get("NAME") {
-                    Some(serde_json::Value::Null) => None,
-                    Some(_) => geometry.as_ref(),
-                    _ => None,
-                }, _ => None,
-            }
-        }
-
-        for geometry in features.iter().filter_map(validate_feature) {
+        for (name, geometry) in features.iter().filter_map(util::validate_feature_properties) {
             let geojson::Geometry { value, .. } = geometry;
 
             if let geojson::Value::MultiPolygon(polygons) = value {
@@ -57,14 +47,11 @@ impl Basemap {
 
                         points.dedup();
 
-                        let color = random_color::RandomColor::new()
-                            .to_rgb_array();
-
                         if points.len() > 2 {
                             imageproc::drawing::draw_antialiased_polygon_mut(
                                 &mut self.buffer, 
                                 &points[0..(points.len() - 1)], 
-                                image::Rgba([color[0], color[1], color[2], 255]),
+                                image::Rgba(util::str_to_rgba8(name)),
                                 imageproc::pixelops::interpolate,
                             );
                         }

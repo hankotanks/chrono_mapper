@@ -78,8 +78,10 @@ fn surface_config_update(
         height, ..
     } = config;
 
+    // 0-sized textures are not allowed
     *width = size.width.clamp(1, limits.max_texture_dimension_2d);
 
+    // wgpu::Limits::max_texture_dimension_2d applies to both dimensions
     *height = size.height.clamp(1, limits.max_texture_dimension_2d);
 }
 

@@ -1,4 +1,3 @@
-use core::str;
 use std::{collections, io};
 
 pub fn load_shader<'a>(
@@ -55,6 +54,8 @@ pub fn load_features_from_geojson<'a>(
     assets: &collections::HashMap<&'a str, &'a [u8]>,
     name: &'a str,
 ) -> anyhow::Result<Vec<geojson::Feature>> {
+    use std::str;
+    
     let data = assets
         .get(name)
         .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
@@ -64,4 +65,38 @@ pub fn load_features_from_geojson<'a>(
     let collection = geojson::FeatureCollection::try_from(features)?.features;
 
     Ok(collection)
+}
+
+pub fn str_to_rgba8(name: &str) -> [u8; 4] {
+    use std::hash;
+    use std::hash::Hasher as _;
+    use std::hash::Hash as _;
+
+    let mut hasher = hash::DefaultHasher::new();
+
+    name.hash(&mut hasher);
+
+    let hashed = hasher.finish();
+
+    [
+        ((hashed & 0xFF0000) >> 16) as u8,
+        ((hashed & 0x00FF00) >> 8) as u8,
+        (hashed & 0x0000FF) as u8,
+        255u8,
+    ]
+}
+
+pub fn validate_feature_properties(
+    feature: &geojson::Feature,
+) -> Option<(&str, &geojson::Geometry)> {
+    let geojson::Feature { geometry, properties, .. } = feature;
+
+    match properties {
+        Some(properties)  => match properties.get("NAME") {
+            Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(name)) => {
+                geometry.as_ref().map(|g| (name.as_str(), g))
+            }, _ => None,
+        }, _ => None,
+    }
 }

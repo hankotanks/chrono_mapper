@@ -1,4 +1,4 @@
-use std::mem;
+use crate::globe::util;
 
 pub struct Geometry<T: bytemuck::Pod + bytemuck::Zeroable> {
     #[allow(dead_code)]
@@ -18,6 +18,8 @@ impl GlobeVertex {
     };
 
     pub fn layout() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
+
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -39,6 +41,8 @@ impl FeatureVertex {
     };
 
     pub fn layout() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
+
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -145,19 +149,7 @@ pub fn build_feature_geometry(
 
     let mut indices = Vec::new();
 
-    fn validate_feature(f: &geojson::Feature) -> Option<&geojson::Geometry> {
-        let geojson::Feature { geometry, properties, .. } = f;
-
-        match properties {
-            Some(properties)  => match properties.get("NAME") {
-                Some(serde_json::Value::Null) => None,
-                Some(_) => geometry.as_ref(),
-                _ => None,
-            }, _ => None,
-        }
-    }
-
-    for geometry in features.iter().filter_map(validate_feature) {
+    for (name, geometry) in features.iter().filter_map(util::validate_feature_properties) {
         let geojson::Geometry { value, .. } = geometry;
 
         if let geojson::Value::MultiPolygon(polygons) = value {
@@ -178,14 +170,15 @@ pub fn build_feature_geometry(
                             .map(|index| (index + offset) as u32)
                     });
 
-                    let color = random_color::RandomColor::new()
-                        .to_rgb_array();
+                    let color = {
+                        let [r, g, b, _] = util::str_to_rgba8(name);
 
-                    let color = [
-                        color[0] as f32 / 255., 
-                        color[1] as f32 / 255., 
-                        color[2] as f32 / 255.,
-                    ];
+                        [
+                            r as f32 / 255.,
+                            g as f32 / 255.,
+                            b as f32 / 255.,
+                        ]
+                    };  
 
                     vertices.extend({
                         points
@@ -200,9 +193,9 @@ pub fn build_feature_geometry(
 
                                 FeatureVertex {
                                     pos: [
-                                        phi.cos() * theta.cos() * (globe_radius * 1.01) * -1., 
-                                        phi.sin() * (globe_radius * 1.01),
-                                        phi.cos() * theta.sin() * (globe_radius * 1.01),
+                                        phi.cos() * theta.cos() * (globe_radius + 1.) * -1., 
+                                        phi.sin() * (globe_radius + 1.),
+                                        phi.cos() * theta.sin() * (globe_radius + 1.),
                                     ], color,
                                 }
                             })
