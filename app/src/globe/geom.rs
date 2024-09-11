@@ -26,6 +26,27 @@ impl GlobeVertex {
     }
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct FeatureVertex { 
+    pub pos: [f32; 3],
+    pub color: [f32; 3],
+}
+
+impl FeatureVertex {
+    const VERTEX_ATTRIBUTES: &'static [wgpu::VertexAttribute] = &{
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3]
+    };
+
+    pub fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: Self::VERTEX_ATTRIBUTES,
+        }
+    }
+}
+
 pub fn build_globe_geometry(
     device: &wgpu::Device,
     slices: u32,
@@ -111,4 +132,107 @@ pub fn build_globe_geometry(
         indices,
         index_buffer,
     }
+}
+
+pub fn build_feature_geometry(
+    device: &wgpu::Device,
+    features: &[geojson::Feature],
+    globe_radius: f32,
+) -> Geometry<FeatureVertex> {
+    use wgpu::util::DeviceExt as _;
+
+    let mut vertices = Vec::new();
+
+    let mut indices = Vec::new();
+
+    fn validate_feature(f: &geojson::Feature) -> Option<&geojson::Geometry> {
+        let geojson::Feature { geometry, properties, .. } = f;
+
+        match properties {
+            Some(properties)  => match properties.get("NAME") {
+                Some(serde_json::Value::Null) => None,
+                Some(_) => geometry.as_ref(),
+                _ => None,
+            }, _ => None,
+        }
+    }
+
+    for geometry in features.iter().filter_map(validate_feature) {
+        let geojson::Geometry { value, .. } = geometry;
+
+        if let geojson::Value::MultiPolygon(polygons) = value {
+            for polygon in polygons {
+                if let Some(outer) = polygon.first() {
+                    let points = outer
+                        .iter()
+                        .map(|vertex| delaunator::Point {
+                            x: vertex[1], 
+                            y: vertex[0],
+                        }).collect::<Vec<_>>();
+
+                    let offset = vertices.len();
+                    indices.extend({
+                        delaunator::triangulate(points.as_slice())
+                            .triangles
+                            .into_iter()
+                            .map(|index| (index + offset) as u32)
+                    });
+
+                    let color = random_color::RandomColor::new()
+                        .to_rgb_array();
+
+                    let color = [
+                        color[0] as f32 / 255., 
+                        color[1] as f32 / 255., 
+                        color[2] as f32 / 255.,
+                    ];
+
+                    vertices.extend({
+                        points
+                            .into_iter()
+                            .map(|delaunator::Point { x, y }| {
+                                use core::f32;
+
+                                let conv = f32::consts::PI / 180.;
+
+                                let phi = conv * x as f32 + f32::consts::PI;
+                                let theta = conv * y as f32;
+
+                                FeatureVertex {
+                                    pos: [
+                                        phi.cos() * theta.cos() * (globe_radius * 1.01) * -1., 
+                                        phi.sin() * (globe_radius * 1.01),
+                                        phi.cos() * theta.sin() * (globe_radius * 1.01),
+                                    ], color,
+                                }
+                            })
+                    });
+                }
+            }
+        }
+    }
+
+    let vertex_buffer = device.create_buffer_init(&{
+        wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        }
+    });
+
+    let index_buffer = device.create_buffer_init(&{
+        wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        }
+    });
+
+    Geometry {
+        vertices,
+        vertex_buffer,
+        indices,
+        index_buffer,
+    }
+
 }

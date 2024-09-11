@@ -15,6 +15,7 @@ pub struct GlobeConfig {
     basemap: &'static str,
     basemap_padding: winit::dpi::PhysicalSize<u32>,
     features: &'static str,
+    features_shader_asset_path: &'static str,
 }
 
 // TODO: GlobeConfig should not implement Default
@@ -29,7 +30,8 @@ impl Default for GlobeConfig {
             globe_shader_asset_path: "shaders::render",
             basemap: "blue_marble_2048.tif", // https://visibleearth.nasa.gov/images/57752/blue-marble-land-surface-shallow-water-and-shaded-topography
             basemap_padding: winit::dpi::PhysicalSize::default(),
-            features: "world_bc5000.geojson",
+            features: "world_2010.geojson",
+            features_shader_asset_path: "shaders::features",
         }
     }
 }
@@ -47,6 +49,8 @@ pub struct Globe {
     camera_bind_group: wgpu::BindGroup,
     globe: geom::Geometry<geom::GlobeVertex>,
     globe_pipeline: wgpu::RenderPipeline,
+    feature_geometry: geom::Geometry<geom::FeatureVertex>,
+    feature_pipeline: wgpu::RenderPipeline,
 }
 
 impl backend::Harness for Globe {
@@ -67,6 +71,7 @@ impl backend::Harness for Globe {
             basemap,
             basemap_padding,
             features,
+            features_shader_asset_path,
         } = config;
 
         let bytes = assets
@@ -94,9 +99,9 @@ impl backend::Harness for Globe {
         });
 
         let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::MirrorRepeat,
-            address_mode_v: wgpu::AddressMode::MirrorRepeat,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest, ..Default::default()
@@ -237,6 +242,68 @@ impl backend::Harness for Globe {
             }
         });
 
+        //
+        //
+
+        let feature_geometry = util::load_features_from_geojson(&assets, features)?;
+        let feature_geometry = geom::build_feature_geometry(
+            device, &feature_geometry, globe_radius,
+        );
+
+        let feature_pipeline_layout = device.create_pipeline_layout(&{
+            wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&camera_bind_group_layout],
+                push_constant_ranges: &[],
+            }
+        });
+
+        let feature_pipeline_shader = device.create_shader_module({
+            util::load_shader(&assets, features_shader_asset_path)?
+        });
+
+        let feature_pipeline = device.create_render_pipeline(&{
+            wgpu::RenderPipelineDescriptor {
+                label: None,
+                layout: Some(&feature_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &feature_pipeline_shader,
+                    entry_point: "vertex",
+                    buffers: &[geom::FeatureVertex::layout()],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &feature_pipeline_shader,
+                    entry_point: "fragment",
+                    targets: &[
+                        Some(wgpu::ColorTargetState {
+                            format,
+                            blend: Some(wgpu::BlendState::REPLACE),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })
+                    ],
+                }),
+                depth_stencil: None,
+                multiview: None,
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+            }
+        }); 
+
+        //
+        //
+
         Ok(Self {
             basemap_data: Some(basemap.buffer),
             texture,
@@ -246,6 +313,8 @@ impl backend::Harness for Globe {
             camera_bind_group,
             globe,
             globe_pipeline,
+            feature_geometry,
+            feature_pipeline,
         })
     }
 
@@ -290,6 +359,30 @@ impl backend::Harness for Globe {
         encoder: &mut wgpu::CommandEncoder,
         surface: &wgpu::TextureView,
     ) -> anyhow::Result<()> {       
+        self.submit_globe_pass(encoder, surface);
+
+        self.submit_feature_pass(encoder, surface);
+
+        Ok(())
+    }
+    
+    fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool {
+        self.camera.handle_event(event)
+    }
+    
+    fn handle_resize(
+        &mut self,
+        size: winit::dpi::PhysicalSize<u32>,
+        scale: f32, 
+    ) { self.camera.handle_resize(size, scale); }
+}
+
+impl Globe {
+    fn submit_globe_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        surface: &wgpu::TextureView,
+    ) {
         let Self {
             texture_bind_group,
             camera_bind_group,
@@ -337,17 +430,54 @@ impl backend::Harness for Globe {
 
         // draw
         pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
+    }
 
-        Ok(())
+    fn submit_feature_pass(
+        &self, 
+        encoder: &mut wgpu::CommandEncoder,
+        surface: &wgpu::TextureView,
+    ) {
+        let Self {
+            camera_bind_group,
+            feature_geometry: geom::Geometry {
+                vertex_buffer,
+                indices,
+                index_buffer, ..
+            },
+            feature_pipeline, ..
+        } = self;
+
+        let color_attachment = wgpu::RenderPassColorAttachment {
+            view: surface,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        };
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(color_attachment)],
+            depth_stencil_attachment: None,
+            ..Default::default()
+        });
+
+        pass.set_pipeline(feature_pipeline);
+
+        // set index buffer
+        pass.set_index_buffer(
+            index_buffer.slice(..), 
+            wgpu::IndexFormat::Uint32,
+        );
+
+        // set vertex buffer
+        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+
+        // bind camera
+        pass.set_bind_group(0, camera_bind_group, &[]);
+
+        // draw
+        pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
     }
-    
-    fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool {
-        self.camera.handle_event(event)
-    }
-    
-    fn handle_resize(
-        &mut self,
-        size: winit::dpi::PhysicalSize<u32>,
-        scale: f32, 
-    ) { self.camera.handle_resize(size, scale); }
 }

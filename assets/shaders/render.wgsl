@@ -37,6 +37,8 @@ const AMBIENCE: f32 = 0.3;
 
 const PI: f32 = 3.1415926535;
 
+const OFFSET: f32 = 0.75;
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var light_dir = normalize(camera.eye.xyz - in.pos_world.xyz);
@@ -45,7 +47,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let pos = normalize(in.pos_world);
     let tex: vec2<f32> = vec2<f32>(
-        (atan2(pos.x, pos.z) / PI + 1.0) / 2.0, asin(pos.y) / PI + 0.5,
+        ((atan2(pos.x, pos.z) / PI + 1.0) / 2.0 + OFFSET) % 1.0, asin(pos.y) / PI + 0.5,
     );
 
     let color = textureSample(mercator, mercator_sampler, tex).xyz * //

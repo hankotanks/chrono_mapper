@@ -92,6 +92,7 @@ dependencies = [
  "anyhow",
  "backend",
  "bytemuck",
+ "delaunator",
  "geojson",
  "image",
  "imageproc",
@@ -481,6 +482,15 @@ dependencies = [
  "bitflags 2.6.0",
  "libloading 0.8.5",
  "winapi",
+]
+
+[[package]]
+name = "delaunator"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ab46e386c7a38300a0d93b0f3e484bc2ee0aded66c47b14762ec9ab383934fa"
+dependencies = [
+ "robust",
 ]
 
 [[package]]
@@ -1504,6 +1514,12 @@ name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+
+[[package]]
+name = "robust"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5864e7ef1a6b7bcf1d6ca3f655e65e724ed3b52546a0d0a663c991522f552ea"
 
 [[package]]
 name = "rustc-hash"
