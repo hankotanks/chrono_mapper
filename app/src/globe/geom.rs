@@ -138,6 +138,41 @@ pub fn build_globe_geometry(
     }
 }
 
+type Point = (f64, f64);
+type Tri = (usize, usize, usize);
+
+#[derive(Default)]
+struct FeaturePolygon {
+    points: Vec<(f64, f64)>,
+    contours: Vec<Vec<usize>>,
+}
+
+impl FeaturePolygon {
+    fn add_linear_ring(&mut self, lr: &[Vec<f64>]) -> Result<(), ()> {
+        if lr.len() < 5 { Err(())?; }
+
+        let offset = self.points.len();
+        let mut curr = (offset..(lr.len() + offset))
+            .collect::<Vec<_>>();
+        
+        curr[lr.len() - 1] = curr[0];
+
+        self.contours.push(curr);
+        self.points.extend({
+            lr[0..(lr.len() - 1)].iter().map(|v| (v[1], v[0]))
+        });
+
+        Ok(())
+    }
+
+    fn triangulate(self) -> Result<(Vec<Point>, Vec<Tri>), cdt::Error> {
+        let Self { points, contours } = self;
+
+        cdt::triangulate_contours(&points, &contours)
+            .map(|triangles| (points, triangles))
+    }
+}
+
 pub fn build_feature_geometry(
     device: &wgpu::Device,
     features: &[geojson::Feature],
@@ -160,49 +195,48 @@ pub fn build_feature_geometry(
         ];
 
         if let geojson::Value::MultiPolygon(polygons) = value {
-            'poly: for polygon in polygons {
-                let mut points = Vec::new();
-                let mut contours: Vec<Vec<usize>> = Vec::new();
+            'raw: for polygon_raw in polygons {
+                let mut polygon = FeaturePolygon::default();
 
-                if let Some(outer) = polygon.first() {
-                    if outer.len() <= 4 { continue 'poly; }
-
-                    let offset = points.len();
-
-                    let mut current_contour = (offset..(outer.len() + offset)).collect::<Vec<_>>();
-                    current_contour[outer.len() - 1] = current_contour[0];
-                    contours.push(current_contour);
-                    points.extend(outer[0..(outer.len() - 1)].iter().map(|v| (v[1], v[0])));
+                'lr: for (idx, lr) in polygon_raw.iter().enumerate() {
+                    match polygon.add_linear_ring(lr) {
+                        Ok(_) => { /*  */ },
+                        Err(_) if idx == 0usize => {
+                            log::info!("skipping {name} [Error: \"invalid outer contour\"]");
+                            continue 'raw;
+                        },
+                        Err(_) => continue 'lr,
+                    }
                 }
 
-                let triangles = cdt::triangulate_contours(
-                    &points, 
-                    contours.as_slice()
-                )?;
+                match polygon.triangulate() {
+                    Ok((points, triangles)) => {
+                        let offset = vertices.len();
 
-                let offset = vertices.len();
+                        vertices.extend(points.into_iter().map(|(x, y)| {
+                            use core::f32;
+        
+                            let lat = x.to_radians() as f32 + f32::consts::PI;
+                            let lon = y.to_radians() as f32;
+                    
+                            FeatureVertex {
+                                pos: [
+                                    lat.cos() * lon.cos() * (globe_radius + 1.) * -1., 
+                                    lat.sin() * (globe_radius + 1.),
+                                    lat.cos() * lon.sin() * (globe_radius + 1.),
+                                ], color,
+                            }
+                        }));
 
-                vertices.extend(points.into_iter().map(|(x, y)| {
-                    use core::f32;
-
-                    let conv = f32::consts::PI / 180.;
-            
-                    let phi = conv * x as f32 + f32::consts::PI;
-                    let theta = conv * y as f32;
-            
-                    FeatureVertex {
-                        pos: [
-                            phi.cos() * theta.cos() * (globe_radius + 1.) * -1., 
-                            phi.sin() * (globe_radius + 1.),
-                            phi.cos() * theta.sin() * (globe_radius + 1.),
-                        ], color,
-                    }
-                }));
-
-                for (a, b, c) in triangles.into_iter() {
-                    indices.push((a + offset) as u32);
-                    indices.push((b + offset) as u32);
-                    indices.push((c + offset) as u32);
+                        for (a, b, c) in triangles.into_iter() {
+                            indices.push((a + offset) as u32);
+                            indices.push((b + offset) as u32);
+                            indices.push((c + offset) as u32);
+                        }
+                    },
+                    Err(e) => {
+                        log::info!("skipping {name} [{e}]"); continue 'raw;
+                    },
                 }
             }
         }
