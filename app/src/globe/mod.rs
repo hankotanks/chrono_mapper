@@ -78,8 +78,7 @@ impl backend::Harness for Globe {
             .get(basemap.replace("::", "/").as_str())
             .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
 
-        let basemap = map_tex::Basemap::from_bytes(bytes, basemap_padding)?
-            .with_features(util::load_features_from_geojson(&assets, features)?);
+        let basemap = map_tex::Basemap::from_bytes(bytes, basemap_padding)?;
         
         let texture = device.create_texture(&{
             wgpu::TextureDescriptor {

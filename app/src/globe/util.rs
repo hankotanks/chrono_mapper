@@ -1,4 +1,4 @@
-use std::{collections, hash, io};
+use std::{collections, io};
 
 pub fn load_shader<'a>(
     assets: &collections::HashMap<&'a str, &'a [u8]>,
@@ -65,36 +65,4 @@ pub fn load_features_from_geojson<'a>(
     let collection = geojson::FeatureCollection::try_from(features)?.features;
 
     Ok(collection)
-}
-
-pub fn hashable_to_rgba8(name: impl hash::Hash) -> [u8; 4] {
-    use std::hash::Hasher as _;
-
-    let mut hasher = hash::DefaultHasher::new();
-
-    name.hash(&mut hasher);
-
-    let hashed = hasher.finish();
-
-    [
-        ((hashed & 0xFF0000) >> 16) as u8,
-        ((hashed & 0x00FF00) >> 8) as u8,
-        (hashed & 0x0000FF) as u8,
-        255u8,
-    ]
-}
-
-pub fn validate_feature_properties(
-    feature: &geojson::Feature,
-) -> Option<(&str, &geojson::Geometry)> {
-    let geojson::Feature { geometry, properties, .. } = feature;
-
-    match properties {
-        Some(properties)  => match properties.get("NAME") {
-            Some(serde_json::Value::Null) => None,
-            Some(serde_json::Value::String(name)) => {
-                geometry.as_ref().map(|g| (name.as_str(), g))
-            }, _ => None,
-        }, _ => None,
-    }
 }

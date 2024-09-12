@@ -35,10 +35,6 @@ version = "0.25.0"
 default-features = false
 features = ["tiff"]
 
-[dependencies.imageproc]
-version = "0.25.0"
-default-features = false
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster = "0.3.0"
 

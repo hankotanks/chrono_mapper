@@ -1,4 +1,4 @@
-use crate::globe::util;
+use std::hash;
 
 pub struct Geometry<T: bytemuck::Pod + bytemuck::Zeroable> {
     #[allow(dead_code)]
@@ -173,6 +173,46 @@ impl FeaturePolygon {
     }
 }
 
+fn hashable_to_rgba8(name: impl hash::Hash) -> [u8; 4] {
+    use hash::Hasher as _;
+
+    let mut hasher = hash::DefaultHasher::new();
+
+    name.hash(&mut hasher);
+
+    let hashed = hasher.finish();
+
+    [
+        ((hashed & 0xFF0000) >> 16) as u8,
+        ((hashed & 0x00FF00) >> 8) as u8,
+        (hashed & 0x0000FF) as u8,
+        255u8,
+    ]
+}
+
+struct IntermediateFeature<'a> {
+    name: &'a str,
+    geometry: &'a geojson::Geometry,
+}
+
+fn validate_feature_properties(
+    feature: &geojson::Feature,
+) -> Option<IntermediateFeature> {
+    let geojson::Feature { geometry, properties, .. } = feature;
+
+    match properties {
+        Some(properties)  => match properties.get("NAME") {
+            Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(name)) => {
+                geometry.as_ref().map(|geometry| {
+                    IntermediateFeature { name, geometry }
+                })
+            }, _ => None,
+        }, _ => None,
+    }
+}
+
+
 pub fn build_feature_geometry(
     device: &wgpu::Device,
     features: &[geojson::Feature],
@@ -184,10 +224,13 @@ pub fn build_feature_geometry(
 
     let mut indices = Vec::new();
 
-    for (name, geometry) in features.iter().filter_map(util::validate_feature_properties) {
-        let geojson::Geometry { value, .. } = geometry;
+    for feature in features.iter().filter_map(validate_feature_properties) {
+        let IntermediateFeature { 
+            name, 
+            geometry: geojson::Geometry { value, .. },
+        } = feature;
 
-        let color = util::hashable_to_rgba8(name);
+        let color = hashable_to_rgba8(name);
         let color = [
             color[0] as f32 / 255.,
             color[1] as f32 / 255.,
