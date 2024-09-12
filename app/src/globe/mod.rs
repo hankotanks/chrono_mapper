@@ -248,7 +248,7 @@ impl backend::Harness for Globe {
         let feature_geometry = util::load_features_from_geojson(&assets, features)?;
         let feature_geometry = geom::build_feature_geometry(
             device, &feature_geometry, globe_radius,
-        );
+        )?;
 
         let feature_pipeline_layout = device.create_pipeline_layout(&{
             wgpu::PipelineLayoutDescriptor {
@@ -292,7 +292,7 @@ impl backend::Harness for Globe {
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
+                    front_face: wgpu::FrontFace::Cw,
                     cull_mode: Some(wgpu::Face::Back),
                     unclipped_depth: false,
                     polygon_mode: wgpu::PolygonMode::Fill,

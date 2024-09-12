@@ -51,7 +51,7 @@ impl Basemap {
                             imageproc::drawing::draw_antialiased_polygon_mut(
                                 &mut self.buffer, 
                                 &points[0..(points.len() - 1)], 
-                                image::Rgba(util::str_to_rgba8(name)),
+                                image::Rgba(util::hashable_to_rgba8(name)),
                                 imageproc::pixelops::interpolate,
                             );
                         }

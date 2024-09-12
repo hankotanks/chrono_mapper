@@ -1,4 +1,4 @@
-use std::{collections, io};
+use std::{collections, hash, io};
 
 pub fn load_shader<'a>(
     assets: &collections::HashMap<&'a str, &'a [u8]>,
@@ -67,10 +67,8 @@ pub fn load_features_from_geojson<'a>(
     Ok(collection)
 }
 
-pub fn str_to_rgba8(name: &str) -> [u8; 4] {
-    use std::hash;
+pub fn hashable_to_rgba8(name: impl hash::Hash) -> [u8; 4] {
     use std::hash::Hasher as _;
-    use std::hash::Hash as _;
 
     let mut hasher = hash::DefaultHasher::new();
 

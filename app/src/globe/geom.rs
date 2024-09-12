@@ -142,7 +142,7 @@ pub fn build_feature_geometry(
     device: &wgpu::Device,
     features: &[geojson::Feature],
     globe_radius: f32,
-) -> Geometry<FeatureVertex> {
+) -> Result<Geometry<FeatureVertex>, cdt::Error> {
     use wgpu::util::DeviceExt as _;
 
     let mut vertices = Vec::new();
@@ -152,54 +152,57 @@ pub fn build_feature_geometry(
     for (name, geometry) in features.iter().filter_map(util::validate_feature_properties) {
         let geojson::Geometry { value, .. } = geometry;
 
+        let color = util::hashable_to_rgba8(name);
+        let color = [
+            color[0] as f32 / 255.,
+            color[1] as f32 / 255.,
+            color[2] as f32 / 255.,
+        ];
+
         if let geojson::Value::MultiPolygon(polygons) = value {
-            for polygon in polygons {
+            'poly: for polygon in polygons {
+                let mut points = Vec::new();
+                let mut contours: Vec<Vec<usize>> = Vec::new();
+
                 if let Some(outer) = polygon.first() {
-                    let points = outer
-                        .iter()
-                        .map(|vertex| delaunator::Point {
-                            x: vertex[1], 
-                            y: vertex[0],
-                        }).collect::<Vec<_>>();
+                    if outer.len() <= 4 { continue 'poly; }
 
-                    let offset = vertices.len();
-                    indices.extend({
-                        delaunator::triangulate(points.as_slice())
-                            .triangles
-                            .into_iter()
-                            .map(|index| (index + offset) as u32)
-                    });
+                    let offset = points.len();
 
-                    let color = {
-                        let [r, g, b, _] = util::str_to_rgba8(name);
+                    let mut current_contour = (offset..(outer.len() + offset)).collect::<Vec<_>>();
+                    current_contour[outer.len() - 1] = current_contour[0];
+                    contours.push(current_contour);
+                    points.extend(outer[0..(outer.len() - 1)].iter().map(|v| (v[1], v[0])));
+                }
 
-                        [
-                            r as f32 / 255.,
-                            g as f32 / 255.,
-                            b as f32 / 255.,
-                        ]
-                    };  
+                let triangles = cdt::triangulate_contours(
+                    &points, 
+                    contours.as_slice()
+                )?;
 
-                    vertices.extend({
-                        points
-                            .into_iter()
-                            .map(|delaunator::Point { x, y }| {
-                                use core::f32;
+                let offset = vertices.len();
 
-                                let conv = f32::consts::PI / 180.;
+                vertices.extend(points.into_iter().map(|(x, y)| {
+                    use core::f32;
 
-                                let phi = conv * x as f32 + f32::consts::PI;
-                                let theta = conv * y as f32;
+                    let conv = f32::consts::PI / 180.;
+            
+                    let phi = conv * x as f32 + f32::consts::PI;
+                    let theta = conv * y as f32;
+            
+                    FeatureVertex {
+                        pos: [
+                            phi.cos() * theta.cos() * (globe_radius + 1.) * -1., 
+                            phi.sin() * (globe_radius + 1.),
+                            phi.cos() * theta.sin() * (globe_radius + 1.),
+                        ], color,
+                    }
+                }));
 
-                                FeatureVertex {
-                                    pos: [
-                                        phi.cos() * theta.cos() * (globe_radius + 1.) * -1., 
-                                        phi.sin() * (globe_radius + 1.),
-                                        phi.cos() * theta.sin() * (globe_radius + 1.),
-                                    ], color,
-                                }
-                            })
-                    });
+                for (a, b, c) in triangles.into_iter() {
+                    indices.push((a + offset) as u32);
+                    indices.push((b + offset) as u32);
+                    indices.push((c + offset) as u32);
                 }
             }
         }
@@ -221,11 +224,11 @@ pub fn build_feature_geometry(
         }
     });
 
-    Geometry {
+    Ok(Geometry {
         vertices,
         vertex_buffer,
         indices,
         index_buffer,
-    }
+    })
 
 }
