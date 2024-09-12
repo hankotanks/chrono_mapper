@@ -52,12 +52,12 @@ pub fn load_shader<'a>(
 #[allow(dead_code)]
 pub fn load_features_from_geojson<'a>(
     assets: &collections::HashMap<&'a str, &'a [u8]>,
-    name: &'a str,
+    path: &'a str,
 ) -> anyhow::Result<Vec<geojson::Feature>> {
     use std::str;
     
     let data = assets
-        .get(name)
+        .get(format!("{}.geojson", path.replace("::", "/")).as_str())
         .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
 
     let features = str::from_utf8(data)?.parse::<geojson::GeoJson>()?;

@@ -3,44 +3,27 @@ mod util;
 mod camera;
 mod map_tex;
 
-use std::io;
+use std::{mem, collections, io};
 
 #[derive(Clone, Copy)]
-pub struct GlobeConfig {
-    format: wgpu::TextureFormat,
-    slices: u32,
-    stacks: u32,
-    globe_radius: f32,
-    globe_shader_asset_path: &'static str,
-    basemap: &'static str,
-    basemap_padding: winit::dpi::PhysicalSize<u32>,
-    features: &'static str,
-    features_shader_asset_path: &'static str,
+pub struct GlobeConfig<'a> {
+    pub format: wgpu::TextureFormat,
+    pub slices: u32,
+    pub stacks: u32,
+    pub globe_radius: f32,
+    pub globe_shader_asset_path: &'a str,
+    pub basemap: &'a str,
+    pub basemap_padding: winit::dpi::PhysicalSize<u32>,
+    pub features: &'a [&'a str],
+    pub features_shader_asset_path: &'a str,
 }
 
-// TODO: GlobeConfig should not implement Default
-// because members like `shader_asset_path` are out of scope
-impl Default for GlobeConfig {
-    fn default() -> Self {
-        Self { 
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            slices: 100,
-            stacks: 100,
-            globe_radius: 10000.,
-            globe_shader_asset_path: "shaders::render",
-            basemap: "blue_marble_2048.tif", // https://visibleearth.nasa.gov/images/57752/blue-marble-land-surface-shallow-water-and-shaded-topography
-            basemap_padding: winit::dpi::PhysicalSize::default(),
-            features: "world_2010.geojson",
-            features_shader_asset_path: "shaders::features",
-        }
-    }
-}
-
-impl backend::HarnessConfig for GlobeConfig {
+impl backend::HarnessConfig for GlobeConfig<'static> {
     fn surface_format(self) -> wgpu::TextureFormat { self.format }
 }
 
 pub struct Globe {
+    assets: collections::HashMap<&'static str, &'static [u8]>,
     basemap_data: Option<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>>,
     texture: wgpu::Texture,
     texture_bind_group: wgpu::BindGroup,
@@ -49,18 +32,19 @@ pub struct Globe {
     camera_bind_group: wgpu::BindGroup,
     globe: geom::Geometry<geom::GlobeVertex>,
     globe_pipeline: wgpu::RenderPipeline,
+    features: FeatureManager,
     feature_geometry: geom::Geometry<geom::FeatureVertex>,
     feature_pipeline: wgpu::RenderPipeline,
 }
 
 impl backend::Harness for Globe {
-    type Config = GlobeConfig;
+    type Config = GlobeConfig<'static>;
 
-    async fn new<'a>(
+    async fn new(
         config: Self::Config, 
         device: &wgpu::Device,
         #[allow(unused_variables)]
-        assets: std::collections::HashMap<&'a str, &'a [u8]>,
+        assets: collections::HashMap<&'static str, &'static [u8]>,
     ) -> anyhow::Result<Self> where Self: Sized {
         let Self::Config { 
             format, 
@@ -151,7 +135,7 @@ impl backend::Harness for Globe {
 
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: std::mem::size_of::<camera::CameraUniform>() as u64,
+            size: mem::size_of::<camera::CameraUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -183,7 +167,7 @@ impl backend::Harness for Globe {
             }
         });
 
-        let globe = geom::build_globe_geometry(
+        let globe = geom::Geometry::build_globe_geometry(
             device, 
             slices, 
             stacks,
@@ -241,14 +225,6 @@ impl backend::Harness for Globe {
             }
         });
 
-        //
-        //
-
-        let feature_geometry = util::load_features_from_geojson(&assets, features)?;
-        let feature_geometry = geom::build_feature_geometry(
-            device, &feature_geometry, globe_radius,
-        )?;
-
         let feature_pipeline_layout = device.create_pipeline_layout(&{
             wgpu::PipelineLayoutDescriptor {
                 label: None,
@@ -300,10 +276,8 @@ impl backend::Harness for Globe {
             }
         }); 
 
-        //
-        //
-
         Ok(Self {
+            assets,
             basemap_data: Some(basemap.buffer),
             texture,
             texture_bind_group,
@@ -312,17 +286,21 @@ impl backend::Harness for Globe {
             camera_bind_group,
             globe,
             globe_pipeline,
-            feature_geometry,
+            features: FeatureManager::new(features, globe_radius),
+            feature_geometry: geom::Geometry::empty(device),
             feature_pipeline,
         })
     }
 
-    fn update(&mut self, queue: &wgpu::Queue) {
+    fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let Self {
+            assets,
             basemap_data,
             texture,
             camera,
-            camera_buffer, ..
+            camera_buffer,
+            features, 
+            feature_geometry, ..
         } = self;
 
         queue.write_buffer(
@@ -351,6 +329,10 @@ impl backend::Harness for Globe {
                 },
             );
         }
+
+        if let Some(new_feature_geometry) = features.load_if_ready(device, assets) {
+            mem::replace(feature_geometry, new_feature_geometry).destroy();
+        }
     }
     
     fn submit_passes(
@@ -366,7 +348,18 @@ impl backend::Harness for Globe {
     }
     
     fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool {
-        self.camera.handle_event(event)
+        use winit::keyboard::{PhysicalKey, KeyCode};
+
+        match event {
+            winit::event::DeviceEvent::Key(winit::event::RawKeyEvent { 
+                physical_key: PhysicalKey::Code(KeyCode::Space), 
+                state: winit::event::ElementState::Released,
+            }) => {
+                self.features.queue(); true
+            },
+            _ => self.camera.handle_event(event),
+        }
+        
     }
     
     fn handle_resize(
@@ -478,5 +471,55 @@ impl Globe {
 
         // draw
         pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
+    }
+}
+
+struct FeatureManager {
+    idx: usize,
+    features: &'static [&'static str],
+    queued: bool,
+    globe_radius: f32,
+}
+
+impl FeatureManager {
+    fn new(features: &'static [&'static str], globe_radius: f32) -> Self {
+        Self {
+            idx: 0,
+            features,
+            queued: true,
+            globe_radius,
+        }
+    }
+
+    fn queue(&mut self) { 
+        self.queued = true; 
+    }
+
+    fn load_if_ready(
+        &mut self,
+        device: &wgpu::Device,
+        assets: &collections::HashMap<&str, &[u8]>,
+    ) -> Option<geom::Geometry<geom::FeatureVertex>> {
+        if !self.queued { 
+            return None; 
+        }
+
+        let feature = self.features[self.idx];
+
+        let result = util::load_features_from_geojson(assets, feature)
+            .and_then(|features| {
+                geom::Geometry::build_feature_geometry(
+                    device, features.as_slice(), self.globe_radius,
+                ).map_err(anyhow::Error::from)
+            });
+
+        self.idx += 1;
+        self.idx %= self.features.len();
+
+        match result {
+            Ok(geometry) => {
+                self.queued = false; Some(geometry)
+            }, Err(_) => None,
+        }
     }
 }

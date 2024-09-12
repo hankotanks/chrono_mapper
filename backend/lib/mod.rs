@@ -7,13 +7,17 @@ use std::{cell, collections, future, rc};
 pub trait Harness {
     type Config: HarnessConfig;
 
-    fn new<'b>(
+    fn new(
         config: Self::Config,
         device: &wgpu::Device,
-        assets: collections::HashMap<&'b str, &'b [u8]>,
+        assets: collections::HashMap<&'static str, &'static [u8]>,
     ) -> impl future::Future<Output = anyhow::Result<Self>> where Self: Sized;
 
-    fn update(&mut self, queue: &wgpu::Queue);
+    fn update(
+        &mut self, 
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    );
 
     fn submit_passes(
         &mut self,
@@ -34,15 +38,15 @@ pub trait HarnessConfig: Copy {
     fn surface_format(self) -> wgpu::TextureFormat;
 }
 
-pub struct App<'a, T: HarnessConfig, H: Harness<Config = T>> {
+pub struct App<'a, Hc: HarnessConfig, H: Harness<Config = Hc>> {
     state: state::State<'a>,
     inner: H,
     event_loop: winit::event_loop::EventLoop<()>,
 }
 
-impl<'a, T: HarnessConfig, H: Harness<Config = T>> App<'a, T, H> {
+impl<'a, Hc: HarnessConfig, H: Harness<Config = Hc>> App<'a, Hc, H> {
     pub async fn new(
-        config: T,
+        config: Hc,
     ) -> Result<Self, String> where Self: Sized {
         #[cfg(target_arch = "wasm32")] {
             console_error_panic_hook::set_once();
@@ -56,9 +60,9 @@ impl<'a, T: HarnessConfig, H: Harness<Config = T>> App<'a, T, H> {
                 .unwrap();
         }
 
-        async fn new_inner<'a, T: HarnessConfig, H: Harness<Config = T>>(
-            config: T
-        ) -> anyhow::Result<App<'a, T, H>> {
+        async fn new_inner<'a, Hc: HarnessConfig, H: Harness<Config = Hc>>(
+            config: Hc
+        ) -> anyhow::Result<App<'a, Hc, H>> {
             let mut assets = collections::HashMap::new();
             for (tag, asset) in generate().into_iter() {
                 assets.insert(tag, asset.data);
@@ -139,7 +143,7 @@ impl<'a, T: HarnessConfig, H: Harness<Config = T>> App<'a, T, H> {
                     event: WindowEvent::RedrawRequested,
                     window_id
                 } if window_id == state.window.id() => {
-                    inner.update(&state.queue);
+                    inner.update(&state.device, &state.queue);
 
                     if let Err(e) = state.process_encoder(|encoder, view| {
                         inner.submit_passes(encoder, view) 
