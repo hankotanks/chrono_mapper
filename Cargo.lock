@@ -93,6 +93,7 @@ dependencies = [
  "backend",
  "bytemuck",
  "cdt",
+ "earcut",
  "geojson",
  "image",
  "log",
@@ -515,6 +516,15 @@ name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
+
+[[package]]
+name = "earcut"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9526c951398fd50ccb5f9eb52f8f9977a8edb3b9c57a155a5de53c2cbf68818e"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "equivalent"

@@ -214,10 +214,6 @@ impl<'a> TempFeature<'a> {
     }
 }
 
-type TempPoint = (f64, f64);
-
-type TempTri = (usize, usize, usize);
-
 #[derive(Default)]
 struct TempPolygon {
     points: Vec<(f64, f64)>,
@@ -225,7 +221,23 @@ struct TempPolygon {
 }
 
 impl TempPolygon {
-    fn add_linear_ring(&mut self, lr: &[Vec<f64>]) -> Result<(), ()> {
+    fn from_linear_rings(rings: &[Vec<(f64, f64)>]) -> anyhow::Result<Self> {
+        let mut polygon = TempPolygon::default();
+
+        'lr: for (idx, lr) in rings.iter().enumerate() {
+            match polygon.add_linear_ring(lr) {
+                Ok(_) => { /*  */ },
+                Err(_) if idx == 0usize => {
+                    anyhow::bail!(cdt::Error::InvalidInput);
+                },
+                Err(_) => continue 'lr,
+            }
+        }
+
+        Ok(polygon)
+    }
+
+    fn add_linear_ring(&mut self, lr: &[(f64, f64)]) -> Result<(), ()> {
         if lr.len() < 5 { Err(())?; }
 
         let offset = self.points.len();
@@ -235,18 +247,50 @@ impl TempPolygon {
         curr[lr.len() - 1] = curr[0];
 
         self.contours.push(curr);
-        self.points.extend({
-            lr[0..(lr.len() - 1)].iter().map(|v| (v[1], v[0]))
-        });
+        self.points.extend_from_slice(&lr[0..(lr.len() - 1)]);
 
         Ok(())
     }
 
-    fn triangulate(self) -> Result<(Vec<TempPoint>, Vec<TempTri>), cdt::Error> {
+    fn triangulate(
+        self,
+        vertices: &mut Vec<FeatureVertex>,
+        indices: &mut Vec<u32>,
+        color: [f32; 3],
+        globe_radius: f32,
+    ) -> Result<(), cdt::Error> {
         let Self { points, contours } = self;
 
-        cdt::triangulate_contours(&points, &contours)
-            .map(|triangles| (points, triangles))
+        match cdt::triangulate_contours(&points, &contours) {
+            Ok(triangles) => {
+                let offset = vertices.len();
+
+                vertices.extend(points.into_iter().map(|(x, y)| {
+                    use core::f32;
+
+                    let lat = x.to_radians() as f32 + f32::consts::PI;
+                    let lon = y.to_radians() as f32;
+            
+                    FeatureVertex {
+                        pos: [
+                            lat.cos() * lon.cos() * (globe_radius + 1.) * -1., 
+                            lat.sin() * (globe_radius + 1.),
+                            lat.cos() * lon.sin() * (globe_radius + 1.),
+                        ], color,
+                    }
+                }));
+
+                for (a, b, c) in triangles.into_iter() {
+                    indices.push((a + offset) as u32);
+                    indices.push((b + offset) as u32);
+                    indices.push((c + offset) as u32);
+                }
+
+                Ok(())
+            }, err => err.map(|_| ()),
+        }
+
+        
     }
 }
 
@@ -277,48 +321,46 @@ impl TempFeatureGeometry {
                 color[2] as f32 / 255.,
             ];
     
-            if let geojson::Value::MultiPolygon(polygons) = value {
-                'raw: for polygon_raw in polygons {
-                    let mut polygon = TempPolygon::default();
-    
-                    'lr: for (idx, lr) in polygon_raw.iter().enumerate() {
-                        match polygon.add_linear_ring(lr) {
-                            Ok(_) => { /*  */ },
-                            Err(_) if idx == 0usize => {
-                                log::info!("skipping {name} [Error: \"invalid outer contour\"]");
-                                continue 'raw;
-                            },
-                            Err(_) => continue 'lr,
-                        }
+            if let geojson::Value::MultiPolygon(multi_polygon) = value {
+                'poly: for polygon in multi_polygon {
+                    let lr: Vec<Result<Vec<(f64, f64)>, cdt::Error>> = polygon
+                        .iter()
+                        .map(|lr| {
+                            lr
+                                .iter()
+                                .map(|pt| match pt.len() {
+                                    2 => Ok((pt[1], pt[0])),
+                                    _ => Err(cdt::Error::InvalidInput),
+                                }).collect()
+                        }).collect();
+
+                    if lr.first().map_or(false, Result::is_err) {
+                        log::warn!("skipping component polygon [{name}]");
+                        continue 'poly;
                     }
-    
-                    match polygon.triangulate() {
-                        Ok((points, triangles)) => {
-                            let offset = vertices.len();
-    
-                            vertices.extend(points.into_iter().map(|(x, y)| {
-                                use core::f32;
-            
-                                let lat = x.to_radians() as f32 + f32::consts::PI;
-                                let lon = y.to_radians() as f32;
-                        
-                                FeatureVertex {
-                                    pos: [
-                                        lat.cos() * lon.cos() * (globe_radius + 1.) * -1., 
-                                        lat.sin() * (globe_radius + 1.),
-                                        lat.cos() * lon.sin() * (globe_radius + 1.),
-                                    ], color,
-                                }
-                            }));
-    
-                            for (a, b, c) in triangles.into_iter() {
-                                indices.push((a + offset) as u32);
-                                indices.push((b + offset) as u32);
-                                indices.push((c + offset) as u32);
+
+                    let lr: Vec<Vec<(f64, f64)>> = lr
+                        .into_iter()
+                        .flatten()
+                        .collect();
+
+                    match TempPolygon::from_linear_rings(&lr) {
+                        Ok(polygon) => {
+                            let result = polygon.triangulate(
+                                &mut vertices, 
+                                &mut indices, 
+                                color, 
+                                globe_radius,
+                            );
+
+                            if result.is_err() {
+                                log::warn!("skipping component polygon [{name}]");
+                                continue 'poly;
                             }
                         },
-                        Err(e) => {
-                            log::info!("skipping {name} [{e}]"); continue 'raw;
+                        Err(_) => {
+                            log::warn!("skipping component polygon [{name}]");
+                            continue 'poly;
                         },
                     }
                 }
