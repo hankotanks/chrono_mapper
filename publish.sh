@@ -11,6 +11,5 @@ git checkout master -- pkg/*
 mv ./pkg/{.[!.],}* ./
 git add -A
 git commit -m "deployment"
-git push
 git checkout master
 git reset HEAD~
