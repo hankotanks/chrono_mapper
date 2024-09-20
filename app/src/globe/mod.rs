@@ -54,7 +54,7 @@ impl backend::Harness for Globe {
             globe_shader_asset_path,
             basemap,
             basemap_padding,
-            features,
+            features: _,
             features_shader_asset_path,
         } = config;
 
@@ -252,7 +252,7 @@ impl backend::Harness for Globe {
                     targets: &[
                         Some(wgpu::ColorTargetState {
                             format,
-                            blend: Some(wgpu::BlendState::REPLACE),
+                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                             write_mask: wgpu::ColorWrites::ALL,
                         })
                     ],
@@ -267,7 +267,7 @@ impl backend::Harness for Globe {
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
-                    front_face: wgpu::FrontFace::Cw,
+                    front_face: wgpu::FrontFace::Ccw,
                     cull_mode: Some(wgpu::Face::Back),
                     unclipped_depth: false,
                     polygon_mode: wgpu::PolygonMode::Fill,
@@ -286,7 +286,7 @@ impl backend::Harness for Globe {
             camera_bind_group,
             globe,
             globe_pipeline,
-            features: FeatureManager::new(features, globe_radius),
+            features: FeatureManager::from(config),
             feature_geometry: geom::Geometry::empty(device),
             feature_pipeline,
         })
@@ -478,19 +478,32 @@ struct FeatureManager {
     idx: usize,
     features: &'static [&'static str],
     queued: bool,
+    slices: u32,
+    stacks: u32,
     globe_radius: f32,
 }
 
-impl FeatureManager {
-    fn new(features: &'static [&'static str], globe_radius: f32) -> Self {
+impl From<GlobeConfig<'static>> for FeatureManager {
+    fn from(value: GlobeConfig<'static>) -> Self {
+        let GlobeConfig {
+            slices,
+            stacks,
+            globe_radius,
+            features, ..
+        } = value;
+        
         Self {
             idx: 0,
             features,
             queued: true,
+            slices,
+            stacks,
             globe_radius,
         }
     }
+}
 
+impl FeatureManager {
     fn queue(&mut self) { 
         self.queued = true; 
     }
@@ -508,8 +521,12 @@ impl FeatureManager {
 
         let result = util::load_features_from_geojson(assets, feature)
             .and_then(|features| {
-                geom::Geometry::build_feature_geometry(
-                    device, features.as_slice(), self.globe_radius,
+                geom::Geometry::build_feature_geometry_earcut(
+                    device, 
+                    features.as_slice(),
+                    self.slices, 
+                    self.stacks,
+                    self.globe_radius, 
                 ).map_err(anyhow::Error::from)
             });
 

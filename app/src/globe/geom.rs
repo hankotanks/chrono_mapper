@@ -175,6 +175,62 @@ impl Geometry<GlobeVertex> {
     }
 }
 
+impl Geometry<FeatureVertex> {
+    pub fn build_feature_geometry_earcut(
+        device: &wgpu::Device,
+        features: &[geojson::Feature],
+        slices: u32,
+        stacks: u32,
+        globe_radius: f32,
+    ) -> anyhow::Result<Geometry<FeatureVertex>> {
+        use wgpu::util::DeviceExt as _;
+
+        let maxima = {
+            use core::f32;
+
+            let a = (f32::consts::PI * 2. / slices as f32).to_degrees();
+            let b = (f32::consts::PI * 2. / stacks as f32).to_degrees();
+
+            a.min(b)
+        };
+
+        let mut geometry = TempFeatureGeometry::default();
+
+        for feature in features.iter().filter_map(TempFeature::validate) {
+            geometry.add_feature(feature, maxima, globe_radius)?;
+        }
+
+        let TempFeatureGeometry { 
+            vertices, 
+            indices 
+        } = geometry;
+
+        let vertex_buffer = device.create_buffer_init(&{
+            wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            }
+        });
+    
+        let index_buffer = device.create_buffer_init(&{
+            wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&indices),
+                usage: wgpu::BufferUsages::INDEX,
+            }
+        });
+    
+        Ok(Geometry {
+            vertices,
+            vertex_buffer,
+            indices,
+            index_buffer,
+        })
+    }
+}
+
+
 fn hashable_to_rgba8(name: impl hash::Hash) -> [u8; 4] {
     use hash::Hasher as _;
 
@@ -198,7 +254,7 @@ struct TempFeature<'a> {
 }
 
 impl<'a> TempFeature<'a> {
-    fn validate_feature_properties(feature: &'a geojson::Feature) -> Option<Self> {
+    fn validate(feature: &'a geojson::Feature) -> Option<Self> {
         let geojson::Feature { geometry, properties, .. } = feature;
 
         match properties {
@@ -214,62 +270,132 @@ impl<'a> TempFeature<'a> {
     }
 }
 
-#[derive(Default)]
-struct TempPolygon {
-    points: Vec<(f64, f64)>,
-    contours: Vec<Vec<usize>>,
+fn validate_triangle(
+    data: &mut Vec<f64>, 
+    tri: &[usize],
+    maxima: f32,
+) -> Vec<usize> {
+    struct MajorAxis {
+        d: ultraviolet::Vec2,
+        fst: [usize; 3],
+        snd: [usize; 3],
+    }
+
+    let [a_idx, b_idx, c_idx] = *tri else { unreachable!(); };
+
+    let a = ultraviolet::Vec2 {
+        x: data[a_idx * 2] as f32, 
+        y: data[a_idx * 2 + 1] as f32 
+    };
+
+    let b = ultraviolet::Vec2 {
+        x: data[b_idx * 2] as f32, 
+        y: data[b_idx * 2 + 1] as f32
+    };
+
+    let c = ultraviolet::Vec2 {
+        x: data[c_idx * 2] as f32, 
+        y: data[c_idx * 2 + 1] as f32
+    };
+
+    let ab = b - a;
+    let bc = c - b;
+    let ca = a - c;
+
+    let ab_mag = ab.mag().abs();
+    let bc_mag = bc.mag().abs();
+    let ca_mag = ca.mag().abs();
+
+    let d_idx = data.len() / 2;
+
+    let axis = if ab_mag > bc_mag && ab_mag > maxima {
+        if ab_mag > ca_mag {
+            Some(MajorAxis {
+                d: a + ab * 0.5,
+                fst: [a_idx, d_idx, c_idx],
+                snd: [b_idx, c_idx, d_idx],
+            })
+        } else {
+            Some(MajorAxis {
+                d: c + ca * 0.5,
+                fst: [a_idx, b_idx, d_idx],
+                snd: [b_idx, c_idx, d_idx],
+            })
+        }
+    } else if bc_mag > ca_mag && bc_mag > maxima {
+        Some(MajorAxis {
+            d:  b + bc * 0.5,
+            fst: [a_idx, b_idx, d_idx],
+            snd: [a_idx, d_idx, c_idx],
+        })
+    } else if ca_mag > maxima {
+        Some(MajorAxis {
+            d: c + ca * 0.5,
+            fst: [a_idx, b_idx, d_idx],
+            snd: [b_idx, c_idx, d_idx],
+        })
+    } else {
+        None
+    };
+
+    match axis {
+        Some(MajorAxis { d, fst, snd }) => {
+            data.push(d.x as f64);
+            data.push(d.y as f64);
+
+            let mut indices = Vec::with_capacity(6);
+            indices.append(&mut validate_triangle(data, &fst, maxima));
+            indices.append(&mut validate_triangle(data, &snd, maxima));
+
+            indices
+        },
+        None => tri.to_vec(),
+    }
 }
 
-impl TempPolygon {
-    fn from_linear_rings(rings: &[Vec<(f64, f64)>]) -> anyhow::Result<Self> {
-        let mut polygon = TempPolygon::default();
+#[derive(Default)]
+struct TempFeatureGeometry {
+    vertices: Vec<FeatureVertex>,
+    indices: Vec<u32>,
+}
 
-        'lr: for (idx, lr) in rings.iter().enumerate() {
-            match polygon.add_linear_ring(lr) {
-                Ok(_) => { /*  */ },
-                Err(_) if idx == 0usize => {
-                    anyhow::bail!(cdt::Error::InvalidInput);
-                },
-                Err(_) => continue 'lr,
-            }
-        }
-
-        Ok(polygon)
-    }
-
-    fn add_linear_ring(&mut self, lr: &[(f64, f64)]) -> Result<(), ()> {
-        if lr.len() < 5 { Err(())?; }
-
-        let offset = self.points.len();
-        let mut curr = (offset..(lr.len() + offset))
-            .collect::<Vec<_>>();
-        
-        curr[lr.len() - 1] = curr[0];
-
-        self.contours.push(curr);
-        self.points.extend_from_slice(&lr[0..(lr.len() - 1)]);
-
-        Ok(())
-    }
-
-    fn triangulate(
-        self,
-        vertices: &mut Vec<FeatureVertex>,
-        indices: &mut Vec<u32>,
-        color: [f32; 3],
+impl TempFeatureGeometry {
+    fn add_feature(
+        &mut self,
+        feature: TempFeature<'_>,
+        maxima: f32,
         globe_radius: f32,
-    ) -> Result<(), cdt::Error> {
-        let Self { points, contours } = self;
+    ) -> Result<(), earcutr::Error> {
+        let Self { vertices, indices } = self;
 
-        match cdt::triangulate_contours(&points, &contours) {
-            Ok(triangles) => {
-                let offset = vertices.len();
+        let TempFeature { 
+            name, 
+            geometry: geojson::Geometry { value, .. },
+        } = feature;
 
-                vertices.extend(points.into_iter().map(|(x, y)| {
+        let color = hashable_to_rgba8(name);
+        let color = [
+            color[0] as f32 / 255.,
+            color[1] as f32 / 255.,
+            color[2] as f32 / 255.,
+        ];
+
+        if let geojson::Value::MultiPolygon(multi_polygon) = value {
+            for polygon in multi_polygon {
+                let (mut data, holes, dims) = earcutr::flatten(polygon);
+
+                indices.extend({
+                    earcutr::earcut(&data, &holes, dims)?
+                        .chunks_exact(3)
+                        .flat_map(|tri| validate_triangle(&mut data, tri, maxima))
+                        .map(|idx| (idx + vertices.len()) as u32)
+                });
+
+                vertices.extend(data.chunks_exact(2).map(|pt| {
                     use core::f32;
 
-                    let lat = x.to_radians() as f32 + f32::consts::PI;
-                    let lon = y.to_radians() as f32;
+                    let lat = pt[1].to_radians() as f32 + f32::consts::PI;
+                    let lon = pt[0].to_radians() as f32;
             
                     FeatureVertex {
                         pos: [
@@ -279,135 +405,9 @@ impl TempPolygon {
                         ], color,
                     }
                 }));
-
-                for (a, b, c) in triangles.into_iter() {
-                    indices.push((a + offset) as u32);
-                    indices.push((b + offset) as u32);
-                    indices.push((c + offset) as u32);
-                }
-
-                Ok(())
-            }, err => err.map(|_| ()),
-        }
-
-        
-    }
-}
-
-struct TempFeatureGeometry {
-    vertices: Vec<FeatureVertex>,
-    indices: Vec<u32>,
-}
-
-impl TempFeatureGeometry {
-    fn build_feature_geometry_raw(
-        features: &[geojson::Feature],
-        globe_radius: f32,
-    ) -> Self {
-        let mut vertices = Vec::new();
-        
-        let mut indices = Vec::new();
-    
-        for feature in features.iter().filter_map(TempFeature::validate_feature_properties) {
-            let TempFeature { 
-                name, 
-                geometry: geojson::Geometry { value, .. },
-            } = feature;
-    
-            let color = hashable_to_rgba8(name);
-            let color = [
-                color[0] as f32 / 255.,
-                color[1] as f32 / 255.,
-                color[2] as f32 / 255.,
-            ];
-    
-            if let geojson::Value::MultiPolygon(multi_polygon) = value {
-                'poly: for polygon in multi_polygon {
-                    let lr: Vec<Result<Vec<(f64, f64)>, cdt::Error>> = polygon
-                        .iter()
-                        .map(|lr| {
-                            lr
-                                .iter()
-                                .map(|pt| match pt.len() {
-                                    2 => Ok((pt[1], pt[0])),
-                                    _ => Err(cdt::Error::InvalidInput),
-                                }).collect()
-                        }).collect();
-
-                    if lr.first().map_or(false, Result::is_err) {
-                        log::warn!("skipping component polygon [{name}]");
-                        continue 'poly;
-                    }
-
-                    let lr: Vec<Vec<(f64, f64)>> = lr
-                        .into_iter()
-                        .flatten()
-                        .collect();
-
-                    match TempPolygon::from_linear_rings(&lr) {
-                        Ok(polygon) => {
-                            let result = polygon.triangulate(
-                                &mut vertices, 
-                                &mut indices, 
-                                color, 
-                                globe_radius,
-                            );
-
-                            if result.is_err() {
-                                log::warn!("skipping component polygon [{name}]");
-                                continue 'poly;
-                            }
-                        },
-                        Err(_) => {
-                            log::warn!("skipping component polygon [{name}]");
-                            continue 'poly;
-                        },
-                    }
-                }
             }
         }
 
-        Self { vertices, indices }
-    }
-}
-
-impl Geometry<FeatureVertex> {
-    pub fn build_feature_geometry(
-        device: &wgpu::Device,
-        features: &[geojson::Feature],
-        globe_radius: f32,
-    ) -> Result<Geometry<FeatureVertex>, cdt::Error> {
-        use wgpu::util::DeviceExt as _;
-    
-        let TempFeatureGeometry {
-            vertices,
-            indices,
-        } = TempFeatureGeometry::build_feature_geometry_raw(
-            features, 
-            globe_radius,
-        );
-    
-        let vertex_buffer = device.create_buffer_init(&{
-            wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            }
-        });
-    
-        let index_buffer = device.create_buffer_init(&{
-            wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&indices),
-                usage: wgpu::BufferUsages::INDEX,
-            }
-        });
-    
-        Ok(Geometry {
-            vertices,
-            vertex_buffer,
-            indices,
-            index_buffer,
-        })
+        Ok(())
     }
 }
