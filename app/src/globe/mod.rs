@@ -390,7 +390,7 @@ impl Globe {
             view: surface,
             resolve_target: None,
             ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color { r: 0., g: 0., b: 1., a: 1. }),
+                load: wgpu::LoadOp::Clear(wgpu::Color { r: 0., g: 0., b: 0., a: 1. }),
                 store: wgpu::StoreOp::Store,
             },
         };
