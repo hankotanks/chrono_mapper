@@ -1,74 +1,69 @@
-use std::{ptr, sync};
-
-use winit::dpi::PhysicalSize;
-
 mod globe;
+
+type App<'a> = backend::App::<'a, globe::GlobeConfig<'static>, globe::Globe>;
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Wrapper;
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen::prelude::wasm_bindgen)]
 impl Wrapper {
-    unsafe fn helper() -> *mut Option<sync::mpsc::Sender<PhysicalSize<u32>>> {
-        static mut SENDER: Option<sync::mpsc::Sender<PhysicalSize<u32>>> = None;
-        ptr::addr_of_mut!(SENDER)
-    }
-
+    #[no_mangle]
     #[cfg(target_arch = "wasm32")]
-    pub unsafe fn update_canvas(
-        width: wasm_bindgen::JsValue, 
-        height: wasm_bindgen::JsValue,
-    ) -> Result<(), String> {
-        use std::io;
-    
-        let width = width
-            .as_string()
-            .ok_or(io::Error::from(io::ErrorKind::InvalidData))
-            .map_err(|e| e.to_string())?
-            .parse::<u32>()
-            .map_err(|e| e.to_string())?;
-    
-        let height = height
-            .as_string()
-            .ok_or(io::Error::from(io::ErrorKind::InvalidData))
-            .map_err(|e| e.to_string())?
-            .parse::<u32>()
-            .map_err(|e| e.to_string())?;
-    
-        unsafe {
-            if let Some(sender) = (*Self::helper()).as_ref() {
-                sender
-                    .send(PhysicalSize { width, height })
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-    
-        Ok(())
-    }
+    pub fn update_canvas(
+        w: wasm_bindgen::JsValue, 
+        h: wasm_bindgen::JsValue,
+    ) -> Result<(), String> { App::update_canvas(w, h) }
 
+    #[no_mangle]
     pub async fn run() -> Result<(), String> {
-        #[cfg(target_arch = "wasm32")] {
-            console_error_panic_hook::set_once();
-            wasm_logger::init(wasm_logger::Config::default());
-        }
-        
-        #[cfg(not(target_arch = "wasm32"))] {
-            simple_logger::SimpleLogger::new()
-                .with_level(log::LevelFilter::Info)
-                .init()
-                .unwrap();
-        }
-    
-        let config = globe::GlobeConfig::default();
-    
-        let (app, sender) = backend::App::<globe::GlobeConfig, globe::Globe>::new(config)
-            .await
-            .map_err(|e| e.to_string())?;
-    
-        unsafe {
-            let _ = (*Self::helper()).insert(sender);
-        }
-    
-        app.run().map_err(|e| e.to_string())
+        (App::new(CONFIG).await)?.run()
     }
 }
+
+const CONFIG: globe::GlobeConfig = globe::GlobeConfig { 
+    format: wgpu::TextureFormat::Rgba8Unorm,
+    slices: 100,
+    stacks: 100,
+    globe_radius: 10000.,
+    globe_shader_asset_path: "shaders::render_basemap",
+    basemap: "blue_marble_2048.tif", // https://visibleearth.nasa.gov/images/57752/blue-marble-land-surface-shallow-water-and-shaded-topography
+    basemap_padding: winit::dpi::PhysicalSize { width: 0, height: 0 },
+    features: &[
+        "features::world_100",
+        "features::world_200",
+        "features::world_300",
+        "features::world_400",
+        "features::world_500",
+        "features::world_600",
+        // "features::world_700",
+        "features::world_800",
+        "features::world_900",
+        // "features::world_1000",
+        // "features::world_1100",
+        // "features::world_1200",
+        // "features::world_1279",
+        "features::world_1300",
+        "features::world_1400",
+        "features::world_1492",
+        // "features::world_1500",
+        "features::world_1530",
+        "features::world_1600",
+        "features::world_1650",
+        "features::world_1700",
+        "features::world_1715",
+        "features::world_1783",
+        "features::world_1800",
+        "features::world_1815",
+        "features::world_1880",
+        "features::world_1900",
+        "features::world_1920",
+        "features::world_1930",
+        "features::world_1938",
+        "features::world_1945",
+        "features::world_1960",
+        "features::world_1994",
+        "features::world_2000",
+        // "features::world_2010",
+    ],
+    features_shader_asset_path: "shaders::render_features",
+};
