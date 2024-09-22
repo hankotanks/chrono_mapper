@@ -66,3 +66,48 @@ pub fn load_features_from_geojson<'a>(
 
     Ok(collection)
 }
+
+pub fn cast(
+    eye: [f32; 4],
+    view: [[f32; 4]; 4], 
+    proj: [[f32; 4]; 4], 
+    cursor: winit::dpi::PhysicalPosition<f32>,
+    globe_radius: f32,
+) {
+    let winit::dpi::PhysicalPosition { x, y } = cursor;
+
+    let ultraviolet::Vec2 { x, y } = (
+        ultraviolet::Mat4::from(proj).inversed() * //
+        ultraviolet::Vec4::new(x, y, -1., 1.)
+    ).xy();
+
+    let ray_world = (
+        ultraviolet::Mat4::from(view).inversed() * //
+        ultraviolet::Vec4::new(x, y, -1., 0.)
+    ).xyz().normalized();
+
+    println!("{:?}", intersection(ultraviolet::Vec4::from(eye).xyz(), ray_world, globe_radius));
+}
+
+pub fn intersection(
+    eye: ultraviolet::Vec3,
+    dir: ultraviolet::Vec3,
+    globe_radius: f32,
+) -> bool {
+    let a = dir.dot(dir);
+    let b = eye.dot(dir) * 2.;
+    let c = eye.dot(eye) - globe_radius * globe_radius;
+
+    let disc = b * b - 4.0 * a * c;
+
+    if disc < 0.0 {
+        return false;
+    } else {
+        let b_neg = b * -1.;
+        let disc_sqrt = disc.sqrt();
+        let t0 = b_neg - disc_sqrt / (a * 2.);
+        let t1 = b_neg + disc_sqrt / (a * 2.);
+
+        return t0 > 0.0 || t1 > 0.0;
+    }
+}

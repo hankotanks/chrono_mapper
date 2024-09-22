@@ -35,6 +35,7 @@ pub struct Globe {
     features: FeatureManager,
     feature_geometry: geom::Geometry<geom::FeatureVertex>,
     feature_pipeline: wgpu::RenderPipeline,
+    dimensions: Option<winit::dpi::PhysicalSize<u32>>,
 }
 
 impl backend::Harness for Globe {
@@ -289,6 +290,7 @@ impl backend::Harness for Globe {
             features: FeatureManager::from(config),
             feature_geometry: geom::Geometry::empty(device),
             feature_pipeline,
+            dimensions: None,
         })
     }
 
@@ -347,7 +349,10 @@ impl backend::Harness for Globe {
         Ok(())
     }
     
-    fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool {
+    fn handle_event(
+        &mut self,
+        event: winit::event::DeviceEvent,
+    ) -> bool {
         use winit::keyboard::{PhysicalKey, KeyCode};
 
         match event {
@@ -366,7 +371,27 @@ impl backend::Harness for Globe {
         &mut self,
         size: winit::dpi::PhysicalSize<u32>,
         scale: f32, 
-    ) { self.camera.handle_resize(size, scale); }
+    ) {
+        self.camera.handle_resize(size, scale);
+
+        let _ = self.dimensions.insert(size);
+    }
+    
+    fn handle_mouse_click(
+        &mut self,
+        button: winit::event::MouseButton,
+        cursor: winit::dpi::PhysicalPosition<f32>,
+    ) {
+        if matches!(button, winit::event::MouseButton::Right) {
+            let camera::CameraUniform {
+                eye,
+                view,
+                proj,
+            } = self.camera.build_camera_uniform();
+
+            util::cast(eye, view, proj, cursor, self.features.globe_radius);
+        }
+    }
 }
 
 impl Globe {

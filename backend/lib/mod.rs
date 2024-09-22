@@ -25,7 +25,16 @@ pub trait Harness {
         surface: &wgpu::TextureView,
     ) -> anyhow::Result<()>;
 
-    fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool;
+    fn handle_event(
+        &mut self, 
+        event: winit::event::DeviceEvent,
+    ) -> bool;
+
+    fn handle_mouse_click(
+        &mut self,
+        button: winit::event::MouseButton,
+        cursor: winit::dpi::PhysicalPosition<f32>,
+    );
 
     fn handle_resize(
         &mut self, 
@@ -153,16 +162,38 @@ impl<'a, Hc: HarnessConfig, H: Harness<Config = Hc>> App<'a, Hc, H> {
                         event_target.exit();
                     }
                 },
-                event => match state.run(event, event_target) {
-                    Ok(Some(size)) => {
-                        inner.handle_resize(size, state.window.scale_factor() as f32);
-                    },
-                    Ok(None) => { /*  */ },
-                    Err(e) => {
-                        let _ = err_inner.get_or_init(|| e);
-        
-                        event_target.exit();
-                    },
+                event => {
+                    match event {
+                        Event::WindowEvent { 
+                            window_id, 
+                            event: WindowEvent::MouseInput {
+                                button,
+                                state: winit::event::ElementState::Pressed, ..
+                            } 
+                        } if window_id == state.window.id() && state.cursor.is_some() => {
+                            let winit::dpi::PhysicalPosition { x, y } = state.cursor.unwrap();
+
+                            let winit::dpi::PhysicalSize { width, height } = state.window.inner_size();
+
+                            let cursor = winit::dpi::PhysicalPosition {
+                                x: (x / width as f32) * 2. - 1.,
+                                y: (y / height as f32) * 2. - 1.,
+                            };
+
+                            inner.handle_mouse_click(button, cursor);
+                        },
+                        event => match state.run(event, event_target) {
+                            Ok(Some(size)) => {
+                                inner.handle_resize(size, state.window.scale_factor() as f32);
+                            },
+                            Ok(None) => { /*  */ },
+                            Err(e) => {
+                                let _ = err_inner.get_or_init(|| e);
+                
+                                event_target.exit();
+                            },
+                        }
+                    }
                 },
             }
         }).map_err(|e| e.to_string())?;
