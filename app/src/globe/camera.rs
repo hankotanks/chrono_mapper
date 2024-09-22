@@ -17,7 +17,7 @@ pub struct Camera {
     eye: [f32; 3],
     target: [f32; 3],
     up: [f32; 3],
-    pub aspect: f32,
+    aspect: f32,
     fovy: f32,
     znear: f32,
     zfar: f32,

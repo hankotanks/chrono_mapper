@@ -30,10 +30,10 @@ pub struct Globe {
     camera: camera::Camera,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    globe: geom::Geometry<geom::GlobeVertex>,
+    globe: geom::Geometry<geom::GlobeVertex, ()>,
     globe_pipeline: wgpu::RenderPipeline,
     features: FeatureManager,
-    feature_geometry: geom::Geometry<geom::FeatureVertex>,
+    feature_geometry: geom::Geometry<geom::FeatureVertex, geom::FeatureMetadata>,
     feature_pipeline: wgpu::RenderPipeline,
     dimensions: Option<winit::dpi::PhysicalSize<u32>>,
 }
@@ -382,14 +382,50 @@ impl backend::Harness for Globe {
         button: winit::event::MouseButton,
         cursor: winit::dpi::PhysicalPosition<f32>,
     ) {
+        use core::f32;
+
+        let Self {
+            camera,
+            features: FeatureManager { globe_radius, .. },
+            feature_geometry: geom::Geometry { 
+                indices, 
+                vertices, 
+                metadata, .. 
+            }, ..
+        } = self;
+
         if matches!(button, winit::event::MouseButton::Right) {
             let camera::CameraUniform {
                 eye,
                 view,
                 proj,
-            } = self.camera.build_camera_uniform();
+            } = camera.build_camera_uniform();
 
-            util::cast(eye, view, proj, cursor, self.features.globe_radius);
+            let ray = util::cursor_to_world_ray(view, proj, cursor);
+
+            let maxima_sq = util::hemisphere_maxima_sq(eye, *globe_radius);
+
+            let mut idx = None;
+            let mut idx_dist = f32::MAX;
+            for (tri_idx, tri) in indices.chunks_exact(3).enumerate() {
+                let [c_idx, b_idx, a_idx] = *tri else { unreachable!(); };
+
+                let a = vertices[a_idx as usize].pos;
+                let b = vertices[b_idx as usize].pos;
+                let c = vertices[c_idx as usize].pos;
+
+                let t = util::intrs(eye, ray, a, b, c, maxima_sq);
+
+                if t < idx_dist {
+                    let _ = idx.insert(tri_idx);
+
+                    idx_dist = t;
+                }
+            }
+
+            if let Some(idx) = idx {
+                println!("{:?}", metadata.get(idx));
+            }
         }
     }
 }
@@ -537,7 +573,7 @@ impl FeatureManager {
         &mut self,
         device: &wgpu::Device,
         assets: &collections::HashMap<&str, &[u8]>,
-    ) -> Option<geom::Geometry<geom::FeatureVertex>> {
+    ) -> Option<geom::Geometry<geom::FeatureVertex, geom::FeatureMetadata>> {
         if !self.queued { 
             return None; 
         }

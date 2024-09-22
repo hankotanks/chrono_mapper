@@ -177,7 +177,7 @@ impl<'a, Hc: HarnessConfig, H: Harness<Config = Hc>> App<'a, Hc, H> {
 
                             let cursor = winit::dpi::PhysicalPosition {
                                 x: (x / width as f32) * 2. - 1.,
-                                y: (y / height as f32) * 2. - 1.,
+                                y: (0.5 - (y / height as f32)) * 2.,
                             };
 
                             inner.handle_mouse_click(button, cursor);

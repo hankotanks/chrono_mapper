@@ -67,29 +67,24 @@ pub fn load_features_from_geojson<'a>(
     Ok(collection)
 }
 
-pub fn cast(
-    eye: [f32; 4],
+pub fn cursor_to_world_ray(
     view: [[f32; 4]; 4], 
     proj: [[f32; 4]; 4], 
     cursor: winit::dpi::PhysicalPosition<f32>,
-    globe_radius: f32,
-) {
+) -> ultraviolet::Vec3 {
+    use ultraviolet::{Vec2, Vec4, Mat4};
+
     let winit::dpi::PhysicalPosition { x, y } = cursor;
 
-    let ultraviolet::Vec2 { x, y } = (
-        ultraviolet::Mat4::from(proj).inversed() * //
-        ultraviolet::Vec4::new(x, y, -1., 1.)
-    ).xy();
+    let Vec2 { 
+        x, y,
+    } = (Mat4::from(proj).inversed() * Vec4::new(x, y, -1., 1.)).xy();
 
-    let ray_world = (
-        ultraviolet::Mat4::from(view).inversed() * //
-        ultraviolet::Vec4::new(x, y, -1., 0.)
-    ).xyz().normalized();
-
-    println!("{:?}", intersection(ultraviolet::Vec4::from(eye).xyz(), ray_world, globe_radius));
+    (Mat4::from(view).inversed() * Vec4::new(x, y, -1., 0.))
+        .xyz().normalized()
 }
 
-pub fn intersection(
+pub fn _globe_intersection_temp(
     eye: ultraviolet::Vec3,
     dir: ultraviolet::Vec3,
     globe_radius: f32,
@@ -101,13 +96,71 @@ pub fn intersection(
     let disc = b * b - 4.0 * a * c;
 
     if disc < 0.0 {
-        return false;
+        false
     } else {
         let b_neg = b * -1.;
         let disc_sqrt = disc.sqrt();
         let t0 = b_neg - disc_sqrt / (a * 2.);
         let t1 = b_neg + disc_sqrt / (a * 2.);
 
-        return t0 > 0.0 || t1 > 0.0;
+        t0 > 0.0 || t1 > 0.0
     }
+}
+
+pub fn intrs(
+    eye: [f32; 4],
+    ray: ultraviolet::Vec3,
+    a: [f32; 3],
+    b: [f32; 3],
+    c: [f32; 3],
+    maxima_sq: f32,
+) -> f32 {
+    use core::f32;
+
+    const EPS: f32 = 0.0000001;
+
+    let eye = ultraviolet::Vec4::from(eye).xyz();
+
+    let a = ultraviolet::Vec3::from(a);
+    let b = ultraviolet::Vec3::from(b);
+    let c = ultraviolet::Vec3::from(c);
+
+    let e1 = b - a;
+    let e2 = c - a;
+
+    let p = ray.cross(e2);
+    let t = eye - a;
+    let q = t.cross(e1);
+
+    let det = e1.dot(p);
+
+    let u = t.dot(p);
+    let v = ray.dot(q);
+
+    #[allow(clippy::if_same_then_else)]
+    if det > EPS && (u < 0. || u > det) {
+        f32::MAX
+    } else if det > EPS && (v < 0. || u + v > det) {
+        f32::MAX
+    } else if det < EPS * -1. {
+        f32::MAX
+    } else {
+        let w = e2.dot(q) / det;
+
+        // TODO: hard-coded near clipping plane value
+        match w * w > maxima_sq || w < 0.1 { 
+            true => f32::MAX,
+            false => (ray * w).mag(),
+        }
+    }
+}
+
+pub fn hemisphere_maxima_sq(
+    eye: [f32; 4],
+    globe_radius: f32,
+) -> f32 {
+    let a = ultraviolet::Vec4::from(eye).xyz().mag();
+    let b = globe_radius * globe_radius;
+
+    a * a  + b * b
 }
