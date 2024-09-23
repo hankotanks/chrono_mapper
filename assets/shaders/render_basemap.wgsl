@@ -1,4 +1,4 @@
-//include shaders::types::camera
+//include shaders/types/camera.wgsl
 
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
@@ -26,7 +26,7 @@ struct VertexOutput {
 @vertex
 fn vertex(model: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-        out.pos_clip = camera.view * vec4<f32>(model.pos, 1.0);
+        out.pos_clip = camera.proj * camera.view * vec4<f32>(model.pos, 1.0);
         out.pos_world = model.pos;
         out.normal = normalize(model.pos);
 

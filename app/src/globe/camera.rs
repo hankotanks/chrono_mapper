@@ -2,8 +2,9 @@
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 #[derive(Debug)]
 pub struct CameraUniform {
-    eye: [f32; 4],
-    view: [[f32; 4]; 4],
+    pub eye: [f32; 4],
+    pub view: [[f32; 4]; 4],
+    pub proj: [[f32; 4]; 4],
 }
 
 #[derive(Clone, Copy)]
@@ -39,7 +40,7 @@ impl Camera {
             aspect: 1.,
             fovy: std::f32::consts::PI / 2.,
             znear: 0.1,
-            zfar: 20000.,
+            zfar: globe_radius * DISTANCE_MULT * 2.,
             locked: true,
         }
     }
@@ -142,7 +143,10 @@ impl Camera {
 
         CameraUniform {
             eye: [eye[0], eye[1], eye[2], 1.],
-            view: (proj * view)
+            view: view
+                .as_component_array()
+                .map(|ultraviolet::Vec4 { x, y, z, w }| [x, y, z, w]),
+            proj: proj
                 .as_component_array()
                 .map(|ultraviolet::Vec4 { x, y, z, w }| [x, y, z, w]),
         }

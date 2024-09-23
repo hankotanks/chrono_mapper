@@ -92,6 +92,7 @@ pub struct State<'a> {
     pub device: wgpu::Device,
     pub surface: wgpu::Surface<'a>,
     pub surface_config: wgpu::SurfaceConfiguration,
+    pub cursor: Option<winit::dpi::PhysicalPosition<f32>>,
 }
 
 impl<'a> State<'a> {
@@ -203,6 +204,7 @@ impl<'a> State<'a> {
             device,
             surface,
             surface_config,
+            cursor: None,
         })
     }
 
@@ -266,7 +268,13 @@ impl<'a> State<'a> {
                         return Ok(Some(winit::dpi::PhysicalSize {
                             width: surface_config.width,
                             height: surface_config.height,
-                        }))
+                        }));
+                    },
+                    WindowEvent::CursorMoved { position, .. } => {
+                        let _ = self.cursor.insert(position.cast());
+                    },
+                    WindowEvent::CursorLeft { .. } => {
+                        let _ = self.cursor.take();
                     },
                     _ => { /*  */ },
                 }

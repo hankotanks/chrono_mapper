@@ -1,15 +1,16 @@
-use std::hash;
+use std::{hash, ops};
 
-pub struct Geometry<T: bytemuck::Pod + bytemuck::Zeroable> {
+pub struct Geometry<T: bytemuck::Pod + bytemuck::Zeroable, M: Default> {
     #[allow(dead_code)]
     pub vertices: Vec<T>,
     pub vertex_buffer: wgpu::Buffer,
     pub indices: Vec<u32>,
     pub index_buffer: wgpu::Buffer,
+    pub metadata: M,
 }
 
-impl<T: bytemuck::Pod + bytemuck::Zeroable> Geometry<T> {
-    pub fn empty(device: &wgpu::Device) -> Geometry<T> {
+impl<T: bytemuck::Pod + bytemuck::Zeroable, M: Default> Geometry<T, M> {
+    pub fn empty(device: &wgpu::Device) -> Self {
         use std::mem;
 
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -31,6 +32,7 @@ impl<T: bytemuck::Pod + bytemuck::Zeroable> Geometry<T> {
             vertex_buffer,
             indices: Vec::with_capacity(0),
             index_buffer,
+            metadata: M::default(),
         }
     }
 
@@ -86,13 +88,27 @@ impl FeatureVertex {
     }
 }
 
-impl Geometry<GlobeVertex> {
+#[derive(Default)]
+pub struct FeatureMetadata {
+    indices: Vec<usize>,
+    entries: Vec<Metadata>,
+}
+
+impl ops::Index<usize> for FeatureMetadata {
+    type Output = Metadata;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.entries[self.indices[index]]
+    }
+}
+
+impl Geometry<GlobeVertex, ()> {
     pub fn build_globe_geometry(
         device: &wgpu::Device,
         slices: u32,
         stacks: u32,
         globe_radius: f32,
-    ) -> Geometry<GlobeVertex> {
+    ) -> Geometry<GlobeVertex, ()> {
         use wgpu::util::DeviceExt as _;
     
         let mut vertices = vec![GlobeVertex { 
@@ -171,19 +187,30 @@ impl Geometry<GlobeVertex> {
             vertex_buffer,
             indices,
             index_buffer,
+            metadata: ()
         }
     }
 }
 
-impl Geometry<FeatureVertex> {
+impl Geometry<FeatureVertex, FeatureMetadata> {
     pub fn build_feature_geometry_earcut(
         device: &wgpu::Device,
         features: &[geojson::Feature],
         slices: u32,
         stacks: u32,
         globe_radius: f32,
-    ) -> anyhow::Result<Geometry<FeatureVertex>> {
+    ) -> anyhow::Result<Self> {
         use wgpu::util::DeviceExt as _;
+
+        fn validation(feature: &geojson::Feature) -> Option<TempFeature<'_>> {
+            TempFeature::validate(feature, |metadata| {
+                match metadata.get("NAME") {
+                    Some(serde_json::Value::Null) => false,
+                    Some(serde_json::Value::String(_)) => true, 
+                    _ => false,
+                }
+            })
+        }
 
         let maxima = {
             use core::f32;
@@ -196,13 +223,14 @@ impl Geometry<FeatureVertex> {
 
         let mut geometry = TempFeatureGeometry::default();
 
-        for feature in features.iter().filter_map(TempFeature::validate) {
+        for feature in features.iter().filter_map(validation) {
             geometry.add_feature(feature, maxima, globe_radius)?;
         }
 
         let TempFeatureGeometry { 
             vertices, 
-            indices 
+            indices,
+            feature_metadata: metadata,
         } = geometry;
 
         let vertex_buffer = device.create_buffer_init(&{
@@ -226,12 +254,14 @@ impl Geometry<FeatureVertex> {
             vertex_buffer,
             indices,
             index_buffer,
+            metadata,
         })
     }
 }
 
 
-fn hashable_to_rgba8(name: impl hash::Hash) -> [u8; 4] {
+#[allow(unused_parens)]
+fn hashable_to_rgba8(name: &(impl hash::Hash)) -> [u8; 4] {
     use hash::Hasher as _;
 
     let mut hasher = hash::DefaultHasher::new();
@@ -248,25 +278,32 @@ fn hashable_to_rgba8(name: impl hash::Hash) -> [u8; 4] {
     ]
 }
 
+type Metadata = serde_json::Map<String, serde_json::Value>;
+
 struct TempFeature<'a> {
-    name: &'a str,
     geometry: &'a geojson::Geometry,
+    metadata: &'a Metadata,
 }
 
 impl<'a> TempFeature<'a> {
-    fn validate(feature: &'a geojson::Feature) -> Option<Self> {
+    fn validate(
+        feature: &'a geojson::Feature,
+        predicate: impl Fn(&Metadata) -> bool,
+    ) -> Option<Self> {
         let geojson::Feature { geometry, properties, .. } = feature;
-
-        match properties {
-            Some(properties)  => match properties.get("NAME") {
-                Some(serde_json::Value::Null) => None,
-                Some(serde_json::Value::String(name)) => {
-                    geometry.as_ref().map(|geometry| {
-                        TempFeature { name, geometry }
-                    })
-                }, _ => None,
-            }, _ => None,
+        
+        match geometry {
+            Some(geometry) => {
+                let metadata = properties.as_ref();
+                match metadata.map(|m| (predicate(m), m)) {
+                    Some((passed, metadata)) if passed => //
+                        Some(Self { geometry, metadata }),
+                    _ => None,
+                }
+            },
+            None => None,
         }
+        
     }
 }
 
@@ -357,6 +394,7 @@ fn validate_triangle(
 struct TempFeatureGeometry {
     vertices: Vec<FeatureVertex>,
     indices: Vec<u32>,
+    feature_metadata: FeatureMetadata,
 }
 
 impl TempFeatureGeometry {
@@ -366,14 +404,18 @@ impl TempFeatureGeometry {
         maxima: f32,
         globe_radius: f32,
     ) -> Result<(), earcutr::Error> {
-        let Self { vertices, indices } = self;
+        let Self { 
+            vertices, 
+            indices,
+            feature_metadata,
+        } = self;
 
-        let TempFeature { 
-            name, 
+        let TempFeature {
             geometry: geojson::Geometry { value, .. },
+            metadata, 
         } = feature;
 
-        let color = hashable_to_rgba8(name);
+        let color = hashable_to_rgba8(metadata);
         let color = [
             color[0] as f32 / 255.,
             color[1] as f32 / 255.,
@@ -384,12 +426,16 @@ impl TempFeatureGeometry {
             for polygon in multi_polygon {
                 let (mut data, holes, dims) = earcutr::flatten(polygon);
 
+                let count = indices.len();
+
                 indices.extend({
                     earcutr::earcut(&data, &holes, dims)?
                         .chunks_exact(3)
                         .flat_map(|tri| validate_triangle(&mut data, tri, maxima))
                         .map(|idx| (idx + vertices.len()) as u32)
                 });
+
+                let count = (indices.len() - count) / 3;
 
                 vertices.extend(data.chunks_exact(2).map(|pt| {
                     use core::f32;
@@ -405,6 +451,11 @@ impl TempFeatureGeometry {
                         ], color,
                     }
                 }));
+
+                let idx = feature_metadata.entries.len();
+
+                feature_metadata.entries.push(metadata.clone());
+                feature_metadata.indices.extend((0..count).map(|_| idx));
             }
         }
 
