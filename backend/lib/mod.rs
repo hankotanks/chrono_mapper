@@ -1,6 +1,7 @@
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
 mod state;
+mod debug_overlay;
 
 use std::{cell, collections, future, rc};
 
@@ -34,7 +35,7 @@ pub trait Harness {
         &mut self,
         button: winit::event::MouseButton,
         cursor: winit::dpi::PhysicalPosition<f32>,
-    );
+    ) -> Option<&str>;
 
     fn handle_resize(
         &mut self, 
@@ -45,12 +46,15 @@ pub trait Harness {
 
 pub trait HarnessConfig: Copy {
     fn surface_format(self) -> wgpu::TextureFormat;
+
+    fn debug_font_asset_path(self) -> &'static str;
 }
 
 pub struct App<'a, Hc: HarnessConfig, H: Harness<Config = Hc>> {
     state: state::State<'a>,
     inner: H,
     event_loop: winit::event_loop::EventLoop<()>,
+    overlays: debug_overlay::DebugOverlay,
 }
 
 impl<'a, Hc: HarnessConfig, H: Harness<Config = Hc>> App<'a, Hc, H> {
@@ -77,15 +81,30 @@ impl<'a, Hc: HarnessConfig, H: Harness<Config = Hc>> App<'a, Hc, H> {
                 assets.insert(tag, asset.data);
             }
 
+            let surface_format = config.surface_format();
+
             let event_loop = winit::event_loop::EventLoop::new()?;
 
             let state = {
-                state::State::new(&event_loop, config.surface_format()).await
+                state::State::new(&event_loop, surface_format).await
             }?;
-    
+
+            let mut overlays = debug_overlay::DebugOverlay::new(
+                &state.device, 
+                &state.queue, 
+                surface_format,
+                assets[config.debug_font_asset_path()].to_vec(),
+            );
+
+            overlays.prepare(
+                &state.device, 
+                &state.queue, 
+                state.window.inner_size(),
+            )?;
+
             let inner = (H::new(config, &state.device, assets).await)?;
     
-            Ok(App { state, inner, event_loop })
+            Ok(App { state, inner, event_loop, overlays })
         }
 
         new_inner(config).await.map_err(|e| e.to_string())
@@ -120,7 +139,7 @@ impl<'a, Hc: HarnessConfig, H: Harness<Config = Hc>> App<'a, Hc, H> {
     }
 
     pub fn run(self) -> Result<(), String> {
-        let Self { mut inner, mut state, event_loop } = self;
+        let Self { mut inner, mut state, event_loop, mut overlays } = self;
 
         let err = rc::Rc::new(cell::OnceCell::new());
         let err_inner = rc::Rc::clone(&err);
@@ -138,6 +157,18 @@ impl<'a, Hc: HarnessConfig, H: Harness<Config = Hc>> App<'a, Hc, H> {
                     },
                     state.window.scale_factor() as f32,
                 );
+
+                let result = overlays.prepare(
+                    &state.device,
+                    &state.queue,
+                    state.window.inner_size(),
+                );
+
+                if let Err(e) = result {
+                    let _ = err_inner.get_or_init(|| e.into());
+
+                    event_target.exit();
+                }
             }
 
             match event {
@@ -150,12 +181,16 @@ impl<'a, Hc: HarnessConfig, H: Harness<Config = Hc>> App<'a, Hc, H> {
                 },
                 Event::WindowEvent {
                     event: WindowEvent::RedrawRequested,
-                    window_id
+                    window_id,
                 } if window_id == state.window.id() => {
                     inner.update(&state.device, &state.queue);
 
                     if let Err(e) = state.process_encoder(|encoder, view| {
-                        inner.submit_passes(encoder, view) 
+                        inner.submit_passes(encoder, view)?;
+
+                        overlays.render(encoder, view)?;
+
+                        Ok(())
                     }) {
                         let _ = err_inner.get_or_init(|| e);
 
@@ -169,7 +204,7 @@ impl<'a, Hc: HarnessConfig, H: Harness<Config = Hc>> App<'a, Hc, H> {
                             event: WindowEvent::MouseInput {
                                 button,
                                 state: winit::event::ElementState::Pressed, ..
-                            } 
+                            },
                         } if window_id == state.window.id() && state.cursor.is_some() => {
                             let winit::dpi::PhysicalPosition { x, y } = state.cursor.unwrap();
 
@@ -180,11 +215,37 @@ impl<'a, Hc: HarnessConfig, H: Harness<Config = Hc>> App<'a, Hc, H> {
                                 y: (0.5 - (y / height as f32)) * 2.,
                             };
 
-                            inner.handle_mouse_click(button, cursor);
+                            if overlays.update_overlay_text(inner.handle_mouse_click(button, cursor)) {
+                                let result = overlays.prepare(
+                                    &state.device,
+                                    &state.queue,
+                                    state.window.inner_size(),
+                                );
+        
+                                if let Err(e) = result {
+                                    let _ = err_inner.get_or_init(|| e.into());
+                
+                                    event_target.exit();
+                                }
+
+                                state.window.request_redraw();
+                            }
                         },
                         event => match state.run(event, event_target) {
                             Ok(Some(size)) => {
                                 inner.handle_resize(size, state.window.scale_factor() as f32);
+
+                                let result = overlays.prepare(
+                                    &state.device,
+                                    &state.queue,
+                                    state.window.inner_size(),
+                                );
+
+                                if let Err(e) = result {
+                                    let _ = err_inner.get_or_init(|| e.into());
+                
+                                    event_target.exit();
+                                }
                             },
                             Ok(None) => { /*  */ },
                             Err(e) => {

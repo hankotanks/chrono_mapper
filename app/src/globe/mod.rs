@@ -7,7 +7,8 @@ use std::{mem, collections, io};
 
 #[derive(Clone, Copy)]
 pub struct GlobeConfig<'a> {
-    pub format: wgpu::TextureFormat,
+    pub surface_format: wgpu::TextureFormat,
+    pub debug_font_asset_path: &'a str,
     pub slices: u32,
     pub stacks: u32,
     pub globe_radius: f32,
@@ -19,7 +20,13 @@ pub struct GlobeConfig<'a> {
 }
 
 impl backend::HarnessConfig for GlobeConfig<'static> {
-    fn surface_format(self) -> wgpu::TextureFormat { self.format }
+    fn surface_format(self) -> wgpu::TextureFormat { 
+        self.surface_format 
+    }
+    
+    fn debug_font_asset_path(self) -> &'static str {
+        self.debug_font_asset_path
+    }
 }
 
 pub struct Globe {
@@ -35,7 +42,7 @@ pub struct Globe {
     features: FeatureManager,
     feature_geometry: geom::Geometry<geom::FeatureVertex, geom::FeatureMetadata>,
     feature_pipeline: wgpu::RenderPipeline,
-    dimensions: Option<winit::dpi::PhysicalSize<u32>>,
+    screen_resolution: Option<winit::dpi::PhysicalSize<u32>>,
 }
 
 impl backend::Harness for Globe {
@@ -48,7 +55,7 @@ impl backend::Harness for Globe {
         assets: collections::HashMap<&'static str, &'static [u8]>,
     ) -> anyhow::Result<Self> where Self: Sized {
         let Self::Config { 
-            format, 
+            surface_format, 
             slices,
             stacks,
             globe_radius,
@@ -57,10 +64,11 @@ impl backend::Harness for Globe {
             basemap_padding,
             features: _,
             features_shader_asset_path,
+            debug_font_asset_path: _,
         } = config;
 
         let bytes = assets
-            .get(basemap.replace("::", "/").as_str())
+            .get(basemap)
             .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
 
         let basemap = map_tex::Basemap::from_bytes(bytes, basemap_padding)?;
@@ -76,9 +84,9 @@ impl backend::Harness for Globe {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format,
+                format: surface_format,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[format],
+                view_formats: &[surface_format],
             }
         });
 
@@ -201,7 +209,7 @@ impl backend::Harness for Globe {
                     entry_point: "fragment",
                     targets: &[
                         Some(wgpu::ColorTargetState {
-                            format,
+                            format: surface_format,
                             blend: Some(wgpu::BlendState::REPLACE),
                             write_mask: wgpu::ColorWrites::ALL,
                         })
@@ -252,7 +260,7 @@ impl backend::Harness for Globe {
                     entry_point: "fragment",
                     targets: &[
                         Some(wgpu::ColorTargetState {
-                            format,
+                            format: surface_format,
                             blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                             write_mask: wgpu::ColorWrites::ALL,
                         })
@@ -290,7 +298,7 @@ impl backend::Harness for Globe {
             features: FeatureManager::from(config),
             feature_geometry: geom::Geometry::empty(device),
             feature_pipeline,
-            dimensions: None,
+            screen_resolution: None,
         })
     }
 
@@ -374,14 +382,14 @@ impl backend::Harness for Globe {
     ) {
         self.camera.handle_resize(size, scale);
 
-        let _ = self.dimensions.insert(size);
+        let _ = self.screen_resolution.insert(size);
     }
     
     fn handle_mouse_click(
         &mut self,
         button: winit::event::MouseButton,
         cursor: winit::dpi::PhysicalPosition<f32>,
-    ) {
+    ) -> Option<&str> {
         use core::f32;
 
         let Self {
@@ -394,38 +402,45 @@ impl backend::Harness for Globe {
             }, ..
         } = self;
 
-        if matches!(button, winit::event::MouseButton::Right) {
-            let camera::CameraUniform {
-                eye,
-                view,
-                proj,
-            } = camera.build_camera_uniform();
+        if !matches!(button, winit::event::MouseButton::Right) { return None; }
 
-            let ray = util::cursor_to_world_ray(view, proj, cursor);
+        let camera::CameraUniform {
+            eye,
+            view,
+            proj,
+        } = camera.build_camera_uniform();
 
-            let maxima_sq = util::hemisphere_maxima_sq(eye, *globe_radius);
+        let ray = util::cursor_to_world_ray(view, proj, cursor);
 
-            let mut idx = None;
-            let mut idx_dist = f32::MAX;
-            for (tri_idx, tri) in indices.chunks_exact(3).enumerate() {
-                let [c_idx, b_idx, a_idx] = *tri else { unreachable!(); };
+        let maxima_sq = util::hemisphere_maxima_sq(eye, *globe_radius);
 
-                let a = vertices[a_idx as usize].pos;
-                let b = vertices[b_idx as usize].pos;
-                let c = vertices[c_idx as usize].pos;
+        let mut idx = None;
+        let mut idx_dist = f32::MAX;
+        for (tri_idx, tri) in indices.chunks_exact(3).enumerate() {
+            let [c_idx, b_idx, a_idx] = *tri else { unreachable!(); };
 
-                let t = util::intrs(eye, ray, a, b, c, maxima_sq);
+            let a = vertices[a_idx as usize].pos;
+            let b = vertices[b_idx as usize].pos;
+            let c = vertices[c_idx as usize].pos;
 
-                if t < idx_dist {
-                    let _ = idx.insert(tri_idx);
+            let t = util::intrs(eye, ray, a, b, c, maxima_sq);
 
-                    idx_dist = t;
+            if t < idx_dist {
+                let _ = idx.insert(tri_idx);
+
+                idx_dist = t;
+            }
+        }
+
+        match idx {
+            Some(idx) => {
+                match metadata[idx].get("NAME") {
+                    Some(serde_json::Value::String(name)) => //
+                        Some(name.as_str()),
+                    _ => None,
                 }
-            }
-
-            if let Some(idx) = idx {
-                println!("{:?}", metadata.get(idx));
-            }
+            },
+            None => None,
         }
     }
 }

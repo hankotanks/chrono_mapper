@@ -1,4 +1,4 @@
-//include shaders::types::camera
+//include shaders/types/camera.wgsl
 
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;

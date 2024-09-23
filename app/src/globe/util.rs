@@ -2,20 +2,13 @@ use std::{collections, io};
 
 pub fn load_shader<'a>(
     assets: &collections::HashMap<&'a str, &'a [u8]>,
-    name: &str,
+    asset_path: &str,
 ) -> Result<wgpu::ShaderModuleDescriptor<'a>, io::Error> {
-    fn as_asset_path(include: &str) -> String {
-        let mut path = include.replace("::", "/");
-
-        path.push_str(".wgsl");
-        path
-    }
-
     fn load_shader_inner<'a>(
-        path: &str, 
         assets: &collections::HashMap<&'a str, &'a [u8]>,
+        asset_path: &str, 
     ) -> Result<String, io::Error> {
-        if let Some(source) = assets.get(path) {
+        if let Some(source) = assets.get(asset_path) {
             let source = String::from_utf8(source.to_vec())
                 .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
 
@@ -23,8 +16,7 @@ pub fn load_shader<'a>(
             for includes in source.lines() {
                 if includes.contains("include") {
                     if let Some(module) = includes.split_whitespace().nth(1) {
-                        let module = as_asset_path(module);
-                        let module = load_shader_inner(&module, assets).unwrap();
+                        let module = load_shader_inner(assets, module).unwrap();
     
                         source_full.push_str(&module);
                     }
@@ -44,7 +36,7 @@ pub fn load_shader<'a>(
 	Ok(wgpu::ShaderModuleDescriptor {
 		label: None,
 		source: wgpu::ShaderSource::Wgsl({
-            load_shader_inner(&as_asset_path(name), assets)?.into()
+            load_shader_inner(assets, asset_path)?.into()
         }),
 	})
 }
@@ -57,7 +49,7 @@ pub fn load_features_from_geojson<'a>(
     use std::str;
     
     let data = assets
-        .get(format!("{}.geojson", path.replace("::", "/")).as_str())
+        .get(path)
         .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
 
     let features = str::from_utf8(data)?.parse::<geojson::GeoJson>()?;

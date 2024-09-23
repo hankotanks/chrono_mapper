@@ -1,4 +1,4 @@
-use std::hash;
+use std::{hash, ops};
 
 pub struct Geometry<T: bytemuck::Pod + bytemuck::Zeroable, M: Default> {
     #[allow(dead_code)]
@@ -94,9 +94,11 @@ pub struct FeatureMetadata {
     entries: Vec<Metadata>,
 }
 
-impl FeatureMetadata {
-    pub fn get(&self, idx: usize) -> &Metadata {
-        &self.entries[self.indices[idx]]
+impl ops::Index<usize> for FeatureMetadata {
+    type Output = Metadata;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.entries[self.indices[index]]
     }
 }
 
