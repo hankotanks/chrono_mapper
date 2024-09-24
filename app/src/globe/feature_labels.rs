@@ -1,0 +1,194 @@
+use std::{iter, sync};
+
+pub struct Label<'a> {
+    pub text: &'a str,
+    pub pos: [f32; 2],
+    pub color: [u8; 3],
+}
+
+struct LabelBuffer {
+    buffer: glyphon::Buffer,
+    bounds: glyphon::TextBounds,
+    color: glyphon::Color,
+}
+
+impl LabelBuffer {
+    fn as_text_area(&self) -> glyphon::TextArea {
+        let Self { 
+            buffer, 
+            bounds: glyphon::TextBounds {
+                left,
+                top,
+                right,
+                bottom,
+            }, 
+            color, .. 
+        } = self;
+
+        glyphon::TextArea {
+            buffer,
+            left: *left as f32,
+            top: *top as f32,
+            scale: 1.,
+            bounds: glyphon::TextBounds {
+                left: 0,
+                top: 0,
+                right: *right,
+                bottom: *bottom,
+            },
+            default_color: *color,
+        }
+    }
+}
+
+pub struct LabelEngine {
+    font_system: glyphon::FontSystem,
+    font_attrs: glyphon::Attrs<'static>,
+    swash_cache: glyphon::SwashCache,
+    atlas: glyphon::TextAtlas,
+    buffers: Vec<LabelBuffer>,
+    renderer: glyphon::TextRenderer,
+}
+
+impl LabelEngine {
+    const METRICS: glyphon::Metrics = glyphon::Metrics::new(18., 18.);
+
+    pub fn new(
+        device: &wgpu::Device, 
+        queue: &wgpu::Queue, 
+        surface_format: wgpu::TextureFormat,
+        font_bytes: Vec<u8>,
+        font_family: &'static str,
+    ) -> Self {
+        let font_system = glyphon::FontSystem::new_with_fonts({
+            use glyphon::fontdb::Source;
+
+            iter::once(Source::Binary(sync::Arc::new(font_bytes)))
+        });
+
+        let swash_cache = glyphon::SwashCache::new();
+
+        let mut atlas = glyphon::TextAtlas::new(
+            device, 
+            queue, 
+            surface_format
+        );
+
+        let renderer = glyphon::TextRenderer::new(
+            &mut atlas, 
+            device, 
+            wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            None
+        );
+
+        Self {
+            font_system,
+            font_attrs: glyphon::Attrs::new().family(glyphon::Family::Name(font_family)),
+            swash_cache,
+            atlas,
+            buffers: Vec::new(),
+            renderer,
+        }
+    }
+
+    pub fn queue_labels_for_display<'a>(
+        &mut self, 
+        labels: impl Iterator<Item = Label<'a>>,
+        screen_resolution: winit::dpi::PhysicalSize<u32>,
+    ) {
+        let Self { 
+            font_system, 
+            font_attrs, 
+            buffers, .. 
+        } = self;
+
+        buffers.clear();
+
+        let winit::dpi::PhysicalSize { width, height } = screen_resolution;
+        
+        for Label { text, pos, color } in labels {
+            let pos = [
+                (pos[0] + 1.) * 0.5 * width as f32,
+                (pos[1] * -1. + 1.) * 0.5 * height as f32,
+            ];
+
+            let mut buffer = glyphon::Buffer::new(font_system, Self::METRICS);
+
+            buffer.set_size(
+                font_system, 
+                width as f32- pos[0], 
+                height as f32 - pos[1],
+            );
+
+            buffer.set_text(
+                font_system, 
+                text, 
+                *font_attrs, 
+                glyphon::Shaping::Basic,
+            );
+
+            let bounds = glyphon::TextBounds {
+                left: pos[0].floor() as i32,
+                top: pos[1].floor() as i32,
+                right: width as i32,
+                bottom: height as i32,
+            };
+
+            let [r, g, b] = color;
+
+            let diff = 255u8 - r.max(g).max(b);
+
+            buffers.push(LabelBuffer {
+                buffer,
+                bounds,
+                color: glyphon::Color::rgb(r + diff, g + diff, b + diff),
+            });
+        }
+    }
+
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        screen_resolution: winit::dpi::PhysicalSize<u32>,
+    ) -> Result<(), glyphon::PrepareError> {
+        let Self { 
+            font_system, 
+            swash_cache,
+            atlas,
+            renderer, 
+            buffers, .. 
+        } = self;
+
+        if buffers.is_empty() { return Ok(()); }
+
+        let winit::dpi::PhysicalSize { width, height } = screen_resolution;
+
+        renderer.prepare(
+            device, 
+            queue, 
+            font_system, 
+            atlas, 
+            glyphon::Resolution { width, height }, 
+            buffers.iter().map(LabelBuffer::as_text_area), 
+            swash_cache,
+        )?;
+
+        buffers.clear();
+
+        Ok(())
+    }
+
+    pub fn render<'p, 'a: 'p>(
+        &'a self, 
+        pass: &mut wgpu::RenderPass<'p>,
+    ) -> Result<(), glyphon::RenderError> {
+        let Self { atlas, renderer, .. } = self;
+
+        renderer.render(atlas, pass)
+    }
+}

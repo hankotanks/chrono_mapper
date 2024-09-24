@@ -76,6 +76,22 @@ pub fn cursor_to_world_ray(
         .xyz().normalized()
 }
 
+pub fn world_to_screen_space(
+    vertex: [f32; 3],
+    view: [[f32; 4]; 4],
+    proj: [[f32; 4]; 4],
+) -> [f32; 2] {
+    use ultraviolet::{Vec3, Vec4, Mat4};
+
+    let mut v = Vec4::from(Vec3::from(vertex));
+    
+    v.w = 1.;
+
+    let v = Mat4::from(proj) * Mat4::from(view) * v;
+
+    *(v / v.w).xy().as_array()
+}
+
 pub fn _globe_intersection_temp(
     eye: ultraviolet::Vec3,
     dir: ultraviolet::Vec3,
