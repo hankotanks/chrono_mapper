@@ -456,10 +456,17 @@ impl backend::Harness for Globe {
                     if let Some(serde_json::Value::String(name)) = entries[idx].get("NAME") {
                         let pos = util::world_to_screen_space(centroid, view, proj);
 
+                        let bb_minima = util::world_to_screen_space(tl, view, proj);
+                        let bb_maxima = util::world_to_screen_space(br, view, proj);
+
+                        let bb_width = (bb_maxima[0] - bb_minima[0]).abs() * 0.5;
+                        let bb_height = (bb_maxima[1] - bb_minima[1]).abs() * 0.5;
+
                         let label = feature_labels::Label {
                             text: name.as_str(),
                             pos,
                             color: colors[idx],
+                            feature_area: bb_width * bb_height,
                         };
 
                         visible_feature_labels.push(label);

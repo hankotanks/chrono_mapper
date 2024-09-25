@@ -4,12 +4,14 @@ pub struct Label<'a> {
     pub text: &'a str,
     pub pos: [f32; 2],
     pub color: [u8; 3],
+    pub feature_area: f32,
 }
 
 struct LabelBuffer {
     buffer: glyphon::Buffer,
     bounds: glyphon::TextBounds,
     color: glyphon::Color,
+    feature_area: f32,
 }
 
 impl LabelBuffer {
@@ -110,7 +112,7 @@ impl LabelEngine {
 
         let winit::dpi::PhysicalSize { width, height } = screen_resolution;
         
-        for Label { text, pos, color } in labels {
+        for Label { text, pos, color, feature_area } in labels {
             let pos = [
                 (pos[0] + 1.) * 0.5 * width as f32,
                 (pos[1] * -1. + 1.) * 0.5 * height as f32,
@@ -147,12 +149,12 @@ impl LabelEngine {
                 left + buffer_width.ceil() as i32
             };
 
-            let bounds = glyphon::TextBounds {
-                left,
-                top: pos[1].floor() as i32,
-                right,
-                bottom: left + Self::METRICS.line_height.ceil() as i32,
-            };
+            let top = pos[1].floor() as i32;
+
+            let bottom = top + buffer.lines.len() as i32 * //
+                Self::METRICS.line_height.ceil() as i32;
+
+            let bounds = glyphon::TextBounds { left, top, right, bottom };
 
             let [r, g, b] = color;
 
@@ -162,7 +164,49 @@ impl LabelEngine {
                 buffer,
                 bounds,
                 color: glyphon::Color::rgb(r + diff, g + diff, b + diff),
+                feature_area,
             });
+        }
+
+        { // cull overlapping buffers
+            use std::collections::{HashMap, HashSet};
+
+            let mut intrs_tests = HashMap::new();
+            for i in 0..buffers.len() {
+                let mut others: HashSet<usize> = HashSet::from_iter(0..buffers.len());
+                others.remove(&i);
+
+                intrs_tests.insert(i, others);
+            }
+
+            for i in 0..buffers.len() {
+                if !intrs_tests.contains_key(&i) { continue; }
+
+                let fst = &buffers[i];
+
+                let js: Vec<usize> = intrs_tests[&i].iter().copied().collect();
+                for j in js {
+                    if !intrs_tests.contains_key(&j) { continue; }
+
+                    let snd = &buffers[j];
+
+                    if overlapping_text_bounds(fst.bounds, snd.bounds) {
+                        if fst.feature_area > snd.feature_area {
+                            intrs_tests.remove(&j);
+                        } else {
+                            intrs_tests.remove(&i);
+
+                            break;
+                        }
+                    }
+                }
+            }
+
+            for i in (0..buffers.len()).rev() {
+                if !intrs_tests.contains_key(&i) {
+                    buffers.remove(i);
+                }
+            }
         }
     }
 
@@ -207,4 +251,13 @@ impl LabelEngine {
 
         renderer.render(atlas, pass)
     }
+}
+
+fn overlapping_text_bounds(a: glyphon::TextBounds, b: glyphon::TextBounds) -> bool {
+    !(
+        b.left > a.right || //
+        b.right < a.left || //
+        b.top > a.bottom || //
+        b.bottom < a.top
+    )
 }
