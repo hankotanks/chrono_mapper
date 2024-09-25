@@ -45,6 +45,10 @@ impl Camera {
         }
     }
 
+    pub fn movement_in_progress(&self) -> bool {
+        !self.locked
+    }
+
     pub fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool {
         let mult = ultraviolet::Vec3::from(self.eye).mag().abs() / //
             self.globe_radius;
@@ -56,12 +60,14 @@ impl Camera {
 
         match event {
             winit::event::DeviceEvent::Button { button: 0, state, } => {
+                let temp = self.locked;
+
                 self.locked = matches!(
                     state, 
                     winit::event::ElementState::Released
                 );
                 
-                false
+                self.locked != temp
             }
             winit::event::DeviceEvent::MouseWheel { delta, .. } => {
                 let scroll_amount = -match delta {

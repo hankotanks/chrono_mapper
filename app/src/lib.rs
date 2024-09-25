@@ -69,4 +69,5 @@ const CONFIG: globe::GlobeConfig = globe::GlobeConfig {
         "features/world_2010.geojson",
     ],
     features_shader_asset_path: "shaders/render_features.wgsl",
+    feature_label_ray_density: 15,
 };

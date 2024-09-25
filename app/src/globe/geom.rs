@@ -1,4 +1,4 @@
-use std::hash;
+use super::util;
 
 pub struct Geometry<T: bytemuck::Pod + bytemuck::Zeroable, M: Default> {
     #[allow(dead_code)]
@@ -261,24 +261,6 @@ impl Geometry<FeatureVertex, FeatureMetadata> {
     }
 }
 
-
-#[allow(unused_parens)]
-fn hashable_to_rgb8(name: &(impl hash::Hash)) -> [u8; 3] {
-    use hash::Hasher as _;
-
-    let mut hasher = hash::DefaultHasher::new();
-
-    name.hash(&mut hasher);
-
-    let hashed = hasher.finish();
-
-    [
-        ((hashed & 0xFF0000) >> 16) as u8,
-        ((hashed & 0x00FF00) >> 8) as u8,
-        (hashed & 0x0000FF) as u8,
-    ]
-}
-
 type Metadata = serde_json::Map<String, serde_json::Value>;
 
 struct TempFeature<'a> {
@@ -422,7 +404,8 @@ impl TempFeatureGeometry {
             metadata, 
         } = feature;
 
-        let color_raw = hashable_to_rgb8(metadata);
+        let color_raw = util::hashable_to_rgb8(metadata);
+
         let color = [
             color_raw[0] as f32 / 255.,
             color_raw[1] as f32 / 255.,
@@ -462,7 +445,7 @@ impl TempFeatureGeometry {
                     bb_max[0] = bb_max[0].max(pt[0]);
                     bb_max[1] = bb_max[1].max(pt[1]);
 
-                    let pos = lat_lon_to_vertex(pt, globe_radius);
+                    let pos = util::lat_lon_to_vertex(pt, globe_radius);
 
                     FeatureVertex { pos, color }
                 }));
@@ -489,10 +472,10 @@ impl TempFeatureGeometry {
                     centroid_accum += tri_centroid * tri_area;         
                 }
 
-                let tl = lat_lon_to_vertex(bb_min, globe_radius);
-                let tr = lat_lon_to_vertex([bb_max[0], bb_min[1]], globe_radius);
-                let bl = lat_lon_to_vertex([bb_min[0], bb_max[1]], globe_radius);
-                let br = lat_lon_to_vertex(bb_max, globe_radius);
+                let tl = util::lat_lon_to_vertex(bb_min, globe_radius);
+                let tr = util::lat_lon_to_vertex([bb_max[0], bb_min[1]], globe_radius);
+                let bl = util::lat_lon_to_vertex([bb_min[0], bb_max[1]], globe_radius);
+                let br = util::lat_lon_to_vertex(bb_max, globe_radius);
 
                 let centroid = centroid_accum / centroid_sum;
 
@@ -506,17 +489,4 @@ impl TempFeatureGeometry {
 
         Ok(())
     }
-}
-
-fn lat_lon_to_vertex(pt: [f32; 2], globe_radius: f32) -> [f32; 3] {
-    use core::f32;
-
-    let lat = pt[0].to_radians() + f32::consts::PI;
-    let lon = pt[1].to_radians();
-
-    [
-        lat.cos() * lon.cos() * globe_radius * -1., 
-        lat.sin() * globe_radius,
-        lat.cos() * lon.sin() * globe_radius,
-    ]
 }

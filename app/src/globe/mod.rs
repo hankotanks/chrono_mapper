@@ -19,6 +19,9 @@ pub struct GlobeConfig<'a> {
     pub basemap_padding: winit::dpi::PhysicalSize<u32>,
     pub features: &'a [&'a str],
     pub features_shader_asset_path: &'a str,
+    // the number of rays to distribute across the screen's width
+    // vertical ray density is proportional to the window's aspect ratio
+    pub feature_label_ray_density: u32,
 }
 
 impl backend::HarnessConfig for GlobeConfig<'static> {
@@ -35,13 +38,16 @@ pub struct Globe {
     camera: camera::Camera,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    globe_radius: f32,
     globe: geom::Geometry<geom::GlobeVertex, ()>,
     globe_pipeline: wgpu::RenderPipeline,
     features: FeatureManager,
     feature_geometry: geom::Geometry<geom::FeatureVertex, geom::FeatureMetadata>,
     feature_pipeline: wgpu::RenderPipeline,
     feature_labels: feature_labels::LabelEngine,
-    screen_resolution: Option<winit::dpi::PhysicalSize<u32>>,
+    screen_ray_density: u32,
+    screen_rays: Vec<[f32; 3]>,
+    screen_resolution: winit::dpi::PhysicalSize<u32>,
 }
 
 impl backend::Harness for Globe {
@@ -54,25 +60,11 @@ impl backend::Harness for Globe {
         #[allow(unused_variables)]
         assets: collections::HashMap<&'static str, &'static [u8]>,
     ) -> anyhow::Result<Self> where Self: Sized {
-        let Self::Config { 
-            surface_format, 
-            font_asset_path,
-            font_family,
-            slices,
-            stacks,
-            globe_radius,
-            globe_shader_asset_path,
-            basemap,
-            basemap_padding,
-            features: _,
-            features_shader_asset_path,
-        } = config;
-
         let bytes = assets
-            .get(basemap)
+            .get(config.basemap)
             .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
 
-        let basemap = map_tex::Basemap::from_bytes(bytes, basemap_padding)?;
+        let basemap = map_tex::Basemap::from_bytes(bytes, config.basemap_padding)?;
         
         let texture = device.create_texture(&{
             wgpu::TextureDescriptor {
@@ -85,9 +77,9 @@ impl backend::Harness for Globe {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: surface_format,
+                format: config.surface_format,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[surface_format],
+                view_formats: &[config.surface_format],
             }
         });
 
@@ -179,9 +171,9 @@ impl backend::Harness for Globe {
 
         let globe = geom::Geometry::build_globe_geometry(
             device, 
-            slices, 
-            stacks,
-            globe_radius,
+            config.slices, 
+            config.stacks,
+            config.globe_radius,
         );
 
         let globe_pipeline_layout = device.create_pipeline_layout(&{
@@ -193,7 +185,7 @@ impl backend::Harness for Globe {
         });
 
         let globe_pipeline_shader = device.create_shader_module({
-            util::load_shader(&assets, globe_shader_asset_path)?
+            util::load_shader(&assets, config.globe_shader_asset_path)?
         });
 
         let globe_pipeline = device.create_render_pipeline(&{
@@ -210,7 +202,7 @@ impl backend::Harness for Globe {
                     entry_point: "fragment",
                     targets: &[
                         Some(wgpu::ColorTargetState {
-                            format: surface_format,
+                            format: config.surface_format,
                             blend: Some(wgpu::BlendState::REPLACE),
                             write_mask: wgpu::ColorWrites::ALL,
                         })
@@ -244,7 +236,7 @@ impl backend::Harness for Globe {
         });
 
         let feature_pipeline_shader = device.create_shader_module({
-            util::load_shader(&assets, features_shader_asset_path)?
+            util::load_shader(&assets, config.features_shader_asset_path)?
         });
 
         let feature_pipeline = device.create_render_pipeline(&{
@@ -261,7 +253,7 @@ impl backend::Harness for Globe {
                     entry_point: "fragment",
                     targets: &[
                         Some(wgpu::ColorTargetState {
-                            format: surface_format,
+                            format: config.surface_format,
                             blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                             write_mask: wgpu::ColorWrites::ALL,
                         })
@@ -289,9 +281,9 @@ impl backend::Harness for Globe {
         let feature_labels = feature_labels::LabelEngine::new(
             device,
             queue,
-            surface_format,
-            assets[font_asset_path].to_vec(),
-            font_family,
+            config.surface_format,
+            assets[config.font_asset_path].to_vec(),
+            config.font_family,
         );
 
         Ok(Self {
@@ -299,16 +291,19 @@ impl backend::Harness for Globe {
             basemap_data: Some(basemap.buffer),
             texture,
             texture_bind_group,
-            camera: camera::Camera::new(globe_radius),
+            camera: camera::Camera::new(config.globe_radius),
             camera_buffer,
             camera_bind_group,
+            globe_radius: config.globe_radius,
             globe,
             globe_pipeline,
             features: FeatureManager::from(config),
             feature_geometry: geom::Geometry::empty(device),
             feature_pipeline,
             feature_labels,
-            screen_resolution: None,
+            screen_ray_density: config.feature_label_ray_density,
+            screen_rays: Vec::with_capacity(0),
+            screen_resolution: winit::dpi::PhysicalSize::default(),
         })
     }
 
@@ -319,16 +314,60 @@ impl backend::Harness for Globe {
             texture,
             camera,
             camera_buffer,
+            globe_radius,
             features, 
             feature_geometry, 
-            feature_labels, 
+            feature_labels,
+            screen_ray_density, 
+            screen_rays,
             screen_resolution, ..
         } = self;
+
+        let camera_uniform = camera
+            .update()
+            .build_camera_uniform();
+
+        // generate rays if its okay to prepare labels
+        match (camera.movement_in_progress(), screen_rays.len()) {
+            (true, screen_ray_count) if screen_ray_count > 0 => screen_rays.clear(), 
+            (false, 0) => {
+                let camera::CameraUniform {
+                    view,
+                    proj, ..
+                } = camera_uniform;
+    
+                let winit::dpi::PhysicalSize { width, height } = *screen_resolution;
+    
+                let gap = (width as f32 / *screen_ray_density as f32).ceil();
+    
+                for y in 0..(height as f32 / gap).ceil() as u32 {
+                    let y = y as f32 / 5. - 1.;
+                    for x in 0..*screen_ray_density {
+                        let x = x as f32 / 5. - 1.;
+    
+                        let cursor = winit::dpi::PhysicalPosition { x, y };
+    
+                        screen_rays.push(util::cursor_to_world_ray(view, proj, cursor));
+                    }
+                }
+            }, _ => { /*  */ },
+        }
+
+        if !camera.movement_in_progress() {
+            feature_labels.queue_labels_for_display(
+                &feature_geometry.metadata,
+                screen_rays,
+                camera_uniform,
+                *globe_radius,
+            );
+
+            feature_labels.prepare(device, queue, *screen_resolution)?;
+        }
 
         queue.write_buffer(
             camera_buffer, 
             0, 
-            bytemuck::cast_slice(&[camera.update().build_camera_uniform()])
+            bytemuck::cast_slice(&[camera_uniform])
         );
 
         if let Some(basemap_data) = basemap_data.take() {
@@ -354,10 +393,6 @@ impl backend::Harness for Globe {
 
         if let Some(new_feature_geometry) = features.load_if_ready(device, assets) {
             mem::replace(feature_geometry, new_feature_geometry).destroy();
-        }
-
-        if let Some(screen_resolution) = screen_resolution {
-            feature_labels.prepare(device, queue, *screen_resolution)?;
         }
 
         Ok(())
@@ -397,92 +432,14 @@ impl backend::Harness for Globe {
     ) {
         self.camera.handle_resize(size, scale);
 
-        let _ = self.screen_resolution.insert(size);
+        self.screen_resolution = size;
     }
     
     fn handle_mouse_click(
         &mut self,
-        button: winit::event::MouseButton,
+        _button: winit::event::MouseButton,
         _cursor: winit::dpi::PhysicalPosition<f32>,
-    ) -> bool {
-        use core::f32;
-
-        let Self {
-            camera,
-            features: FeatureManager { globe_radius, .. },
-            feature_geometry: geom::Geometry {
-                metadata: geom::FeatureMetadata {
-                    entries,
-                    colors,
-                    bounding_boxes, .. 
-                }, ..
-            }, 
-            feature_labels, 
-            screen_resolution, ..
-        } = self;
-
-        if !matches!(button, winit::event::MouseButton::Right) { return false; }
-
-        let camera::CameraUniform {
-            eye,
-            view,
-            proj,
-        } = camera.build_camera_uniform();
-
-        let maxima_sq = util::hemisphere_maxima_sq(eye, *globe_radius);
-
-        let mut rays = Vec::with_capacity(100);
-        for y in 0..10 {
-            let y = y as f32 / 5. - 1.;
-            for x in 0..10 {
-                let x = x as f32 / 5. - 1.;
-
-                let cursor = winit::dpi::PhysicalPosition { x, y };
-
-                rays.push(util::cursor_to_world_ray(view, proj, cursor));
-            }
-        }
-
-        let mut visible_feature_labels = Vec::new();
-
-        for ray in rays.iter().copied() {
-            for (bb, idx) in bounding_boxes.iter().copied() {
-                let geom::BoundingBox { centroid, tl, tr, bl, br } = bb;
-
-                let a = util::intrs(eye, ray, tl, tr, bl, maxima_sq);
-                let b = util::intrs(eye, ray, tr, br, bl, maxima_sq);
-            
-                if a < f32::MAX || b < f32::MAX {
-                    if let Some(serde_json::Value::String(name)) = entries[idx].get("NAME") {
-                        let pos = util::world_to_screen_space(centroid, view, proj);
-
-                        let bb_minima = util::world_to_screen_space(tl, view, proj);
-                        let bb_maxima = util::world_to_screen_space(br, view, proj);
-
-                        let bb_width = (bb_maxima[0] - bb_minima[0]).abs() * 0.5;
-                        let bb_height = (bb_maxima[1] - bb_minima[1]).abs() * 0.5;
-
-                        let label = feature_labels::Label {
-                            text: name.as_str(),
-                            pos,
-                            color: colors[idx],
-                            feature_area: bb_width * bb_height,
-                        };
-
-                        visible_feature_labels.push(label);
-                    }
-                }
-            }
-        }
-
-        if let Some(screen_resolution) = screen_resolution {
-            feature_labels.queue_labels_for_display(
-                visible_feature_labels.into_iter(), *screen_resolution,
-            );
-        }
-        
-        true
-    }
+    ) -> bool { /* TODO */ false }
 }
 
 impl Globe {
@@ -555,7 +512,8 @@ impl Globe {
                 index_buffer, ..
             },
             feature_pipeline, 
-            feature_labels, ..
+            feature_labels, 
+            screen_rays, ..
         } = self;
 
         let color_attachment = wgpu::RenderPassColorAttachment {
@@ -591,7 +549,11 @@ impl Globe {
         // draw
         pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
 
-        feature_labels.render(&mut pass)?;
+        // only render labels if screen rays are generated
+        // if they aren't then the camera is being moved
+        if !screen_rays.is_empty() {
+            feature_labels.render(&mut pass)?;
+        }
 
         Ok(())
     }

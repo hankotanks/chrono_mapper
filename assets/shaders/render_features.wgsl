@@ -28,5 +28,5 @@ fn vertex(model: VertexInput) -> VertexOutput {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color, 0.6);
+    return vec4<f32>(in.color, 0.5);
 }

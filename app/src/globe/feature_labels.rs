@@ -1,7 +1,9 @@
 use std::{iter, sync};
 
-pub struct Label<'a> {
-    pub text: &'a str,
+use super::{camera, geom, util};
+
+pub struct Label {
+    pub text: String,
     pub pos: [f32; 2],
     pub color: [u8; 3],
     pub feature_area: f32,
@@ -48,7 +50,7 @@ pub struct LabelEngine {
     font_attrs: glyphon::Attrs<'static>,
     swash_cache: glyphon::SwashCache,
     atlas: glyphon::TextAtlas,
-    buffers: Vec<LabelBuffer>,
+    visible_feature_labels: Vec<Label>,
     renderer: glyphon::TextRenderer,
 }
 
@@ -92,27 +94,87 @@ impl LabelEngine {
             font_attrs: glyphon::Attrs::new().family(glyphon::Family::Name(font_family)),
             swash_cache,
             atlas,
-            buffers: Vec::new(),
+            visible_feature_labels: Vec::with_capacity(0),
             renderer,
         }
     }
 
-    pub fn queue_labels_for_display<'a>(
+    pub fn queue_labels_for_display(
         &mut self, 
-        labels: impl Iterator<Item = Label<'a>>,
-        screen_resolution: winit::dpi::PhysicalSize<u32>,
+        metadata: &geom::FeatureMetadata,
+        rays: &[[f32; 3]],
+        camera_uniform: camera::CameraUniform,
+        globe_radius: f32,
     ) {
+        use core::f32;
+
+        let Self { visible_feature_labels, .. } = self;
+
+        let geom::FeatureMetadata {
+            entries,
+            colors,
+            bounding_boxes, .. 
+        } = metadata;
+
+        let camera::CameraUniform {
+            eye,
+            view,
+            proj,
+        } = camera_uniform;
+
+        let maxima_sq = util::hemisphere_maxima_sq(eye, globe_radius);
+
+        for ray in rays.iter().copied() {
+            for (bb, idx) in bounding_boxes.iter().copied() {
+                let geom::BoundingBox { centroid, tl, tr, bl, br } = bb;
+
+                let a = util::intrs(eye, ray, tl, tr, bl, maxima_sq);
+                let b = util::intrs(eye, ray, tr, br, bl, maxima_sq);
+            
+                if a < f32::MAX || b < f32::MAX {
+                    if let Some(serde_json::Value::String(name)) = entries[idx].get("NAME") {
+                        let pos = util::world_to_screen_space(centroid, view, proj);
+
+                        let bb_minima = util::world_to_screen_space(tl, view, proj);
+                        let bb_maxima = util::world_to_screen_space(br, view, proj);
+
+                        let bb_width = (bb_maxima[0] - bb_minima[0]).abs() * 0.5;
+                        let bb_height = (bb_maxima[1] - bb_minima[1]).abs() * 0.5;
+
+                        let label = Label {
+                            text: name.to_owned(),
+                            pos,
+                            color: colors[idx],
+                            feature_area: bb_width * bb_height,
+                        };
+
+                        visible_feature_labels.push(label);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        screen_resolution: winit::dpi::PhysicalSize<u32>,
+    ) -> Result<(), glyphon::PrepareError> {
         let Self { 
             font_system, 
-            font_attrs, 
-            buffers, .. 
+            font_attrs,
+            swash_cache,
+            atlas,
+            renderer, 
+            visible_feature_labels, .. 
         } = self;
 
-        buffers.clear();
+        let mut buffers = Vec::with_capacity(visible_feature_labels.len());
 
         let winit::dpi::PhysicalSize { width, height } = screen_resolution;
         
-        for Label { text, pos, color, feature_area } in labels {
+        for Label { text, pos, color, feature_area } in visible_feature_labels.drain(0..) {
             let pos = [
                 (pos[0] + 1.) * 0.5 * width as f32,
                 (pos[1] * -1. + 1.) * 0.5 * height as f32,
@@ -126,10 +188,11 @@ impl LabelEngine {
                 height as f32 - pos[1],
             );
 
+            #[allow(unused_parens)]
             buffer.set_text(
                 font_system, 
-                text, 
-                *font_attrs, 
+                text.as_str(), 
+                (*font_attrs), 
                 glyphon::Shaping::Basic,
             );
 
@@ -158,12 +221,10 @@ impl LabelEngine {
 
             let [r, g, b] = color;
 
-            let diff = 255u8 - r.max(g).max(b);
-
             buffers.push(LabelBuffer {
                 buffer,
                 bounds,
-                color: glyphon::Color::rgb(r + diff, g + diff, b + diff),
+                color: glyphon::Color::rgb(r, g, b),
                 feature_area,
             });
         }
@@ -190,7 +251,14 @@ impl LabelEngine {
 
                     let snd = &buffers[j];
 
-                    if overlapping_text_bounds(fst.bounds, snd.bounds) {
+                    let overlapping = !(
+                        snd.bounds.left > fst.bounds.right || //
+                        snd.bounds.right < fst.bounds.left || //
+                        snd.bounds.top > fst.bounds.bottom || //
+                        snd.bounds.bottom < fst.bounds.top
+                    );
+
+                    if overlapping {
                         if fst.feature_area > snd.feature_area {
                             intrs_tests.remove(&j);
                         } else {
@@ -208,25 +276,8 @@ impl LabelEngine {
                 }
             }
         }
-    }
-
-    pub fn prepare(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        screen_resolution: winit::dpi::PhysicalSize<u32>,
-    ) -> Result<(), glyphon::PrepareError> {
-        let Self { 
-            font_system, 
-            swash_cache,
-            atlas,
-            renderer, 
-            buffers, .. 
-        } = self;
 
         if buffers.is_empty() { return Ok(()); }
-
-        let winit::dpi::PhysicalSize { width, height } = screen_resolution;
 
         renderer.prepare(
             device, 
@@ -237,8 +288,6 @@ impl LabelEngine {
             buffers.iter().map(LabelBuffer::as_text_area), 
             swash_cache,
         )?;
-
-        buffers.clear();
 
         Ok(())
     }
@@ -251,13 +300,4 @@ impl LabelEngine {
 
         renderer.render(atlas, pass)
     }
-}
-
-fn overlapping_text_bounds(a: glyphon::TextBounds, b: glyphon::TextBounds) -> bool {
-    !(
-        b.left > a.right || //
-        b.right < a.left || //
-        b.top > a.bottom || //
-        b.bottom < a.top
-    )
 }

@@ -1,4 +1,4 @@
-use std::{collections, io};
+use std::{collections, hash, io};
 
 pub fn load_shader<'a>(
     assets: &collections::HashMap<&'a str, &'a [u8]>,
@@ -63,7 +63,7 @@ pub fn cursor_to_world_ray(
     view: [[f32; 4]; 4], 
     proj: [[f32; 4]; 4], 
     cursor: winit::dpi::PhysicalPosition<f32>,
-) -> ultraviolet::Vec3 {
+) -> [f32; 3] {
     use ultraviolet::{Vec2, Vec4, Mat4};
 
     let winit::dpi::PhysicalPosition { x, y } = cursor;
@@ -72,8 +72,8 @@ pub fn cursor_to_world_ray(
         x, y,
     } = (Mat4::from(proj).inversed() * Vec4::new(x, y, -1., 1.)).xy();
 
-    (Mat4::from(view).inversed() * Vec4::new(x, y, -1., 0.))
-        .xyz().normalized()
+    *(Mat4::from(view).inversed() * Vec4::new(x, y, -1., 0.))
+        .xyz().normalized().as_array()
 }
 
 pub fn world_to_screen_space(
@@ -92,32 +92,9 @@ pub fn world_to_screen_space(
     *(v / v.w).xy().as_array()
 }
 
-pub fn _globe_intersection_temp(
-    eye: ultraviolet::Vec3,
-    dir: ultraviolet::Vec3,
-    globe_radius: f32,
-) -> bool {
-    let a = dir.dot(dir);
-    let b = eye.dot(dir) * 2.;
-    let c = eye.dot(eye) - globe_radius * globe_radius;
-
-    let disc = b * b - 4.0 * a * c;
-
-    if disc < 0.0 {
-        false
-    } else {
-        let b_neg = b * -1.;
-        let disc_sqrt = disc.sqrt();
-        let t0 = b_neg - disc_sqrt / (a * 2.);
-        let t1 = b_neg + disc_sqrt / (a * 2.);
-
-        t0 > 0.0 || t1 > 0.0
-    }
-}
-
 pub fn intrs(
     eye: [f32; 4],
-    ray: ultraviolet::Vec3,
+    ray: [f32; 3],
     a: [f32; 3],
     b: [f32; 3],
     c: [f32; 3],
@@ -135,6 +112,8 @@ pub fn intrs(
 
     let e1 = b - a;
     let e2 = c - a;
+
+    let ray = ultraviolet::Vec3::from(ray);
 
     let p = ray.cross(e2);
     let t = eye - a;
@@ -171,4 +150,41 @@ pub fn hemisphere_maxima_sq(
     let b = globe_radius * globe_radius;
 
     a * a  + b * b
+}
+
+pub fn lat_lon_to_vertex(pt: [f32; 2], globe_radius: f32) -> [f32; 3] {
+    use core::f32;
+
+    let lat = pt[0].to_radians() + f32::consts::PI;
+    let lon = pt[1].to_radians();
+
+    [
+        lat.cos() * lon.cos() * globe_radius * -1., 
+        lat.sin() * globe_radius,
+        lat.cos() * lon.sin() * globe_radius,
+    ]
+}
+
+#[allow(unused_parens, clippy::double_parens)]
+pub fn hashable_to_rgb8(name: &(impl hash::Hash)) -> [u8; 3] {
+    use hash::Hasher as _;
+
+    let mut hasher = hash::DefaultHasher::new();
+
+    name.hash(&mut hasher);
+
+    let color_hash = hasher.finish();
+    let color = [
+        ((color_hash & 0xFF0000) >> 16) as u8,
+        ((color_hash & 0x00FF00) >> 8) as u8,
+        ((color_hash & 0x0000FF)) as u8,
+    ];
+
+    let diff = 255u8 - color.into_iter().fold(0, |m, c| m.max(c));
+
+    [
+        color[0] + diff, 
+        color[1] + diff, 
+        color[2] + diff,
+    ]
 }
