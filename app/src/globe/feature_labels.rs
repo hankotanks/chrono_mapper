@@ -131,11 +131,27 @@ impl LabelEngine {
                 glyphon::Shaping::Basic,
             );
 
+            buffer.set_wrap(font_system, glyphon::Wrap::Word);
+
+            buffer.shape_until_scroll(font_system);
+
+            let buffer_width: f32 = buffer
+                .layout_runs()
+                .fold(0., |bw, run| bw.max(run.line_w));
+
+            let left = pos[0].floor() as i32;
+
+            let right = if buffer_width == 0. {
+                width as i32
+            } else {
+                left + buffer_width.ceil() as i32
+            };
+
             let bounds = glyphon::TextBounds {
-                left: pos[0].floor() as i32,
+                left,
                 top: pos[1].floor() as i32,
-                right: width as i32,
-                bottom: height as i32,
+                right,
+                bottom: left + Self::METRICS.line_height.ceil() as i32,
             };
 
             let [r, g, b] = color;

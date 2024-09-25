@@ -443,12 +443,15 @@ impl TempFeatureGeometry {
 
                 let (mut data, holes, dims) = earcutr::flatten(polygon);
 
-                indices.extend({
-                    earcutr::earcut(&data, &holes, dims)?
-                        .chunks_exact(3)
-                        .flat_map(|tri| validate_triangle(&mut data, tri, maxima))
-                        .map(|idx| (idx + vertices.len()) as u32)
-                });
+                let vertices_len = vertices.len();
+
+                let polygon_indices: Vec<u32> = earcutr::earcut(&data, &holes, dims)?
+                    .chunks_exact(3)
+                    .flat_map(|tri| validate_triangle(&mut data, tri, maxima))
+                    .map(|idx| (idx + vertices_len) as u32)
+                    .collect();
+
+                indices.extend_from_slice(&polygon_indices);
 
                 vertices.extend(data.chunks_exact(2).map(|pt| {
                     let pt = [pt[1] as f32, pt[0] as f32];
@@ -464,13 +467,34 @@ impl TempFeatureGeometry {
                     FeatureVertex { pos, color }
                 }));
 
+                let mut centroid_sum = 0.;
+                let mut centroid_accum = ultraviolet::Vec3::zero();
+
+                for tri in polygon_indices.chunks_exact(3) {
+                    let [a_idx, b_idx, c_idx] = *tri else { unreachable!(); };
+
+                    if (holes.contains(&(a_idx as usize - vertices_len))) || //
+                        holes.contains(&(b_idx as usize - vertices_len)) || //
+                        holes.contains(&(c_idx as usize - vertices_len)) { continue; }
+
+                    let a = ultraviolet::Vec3::from(vertices[a_idx as usize].pos);
+                    let b = ultraviolet::Vec3::from(vertices[b_idx as usize].pos);
+                    let c = ultraviolet::Vec3::from(vertices[c_idx as usize].pos);
+
+                    let tri_centroid = (a + b + c) / 3.;
+
+                    let tri_area = (b - a).cross(c - a).mag();       
+
+                    centroid_sum += tri_area;
+                    centroid_accum += tri_centroid * tri_area;         
+                }
+
                 let tl = lat_lon_to_vertex(bb_min, globe_radius);
                 let tr = lat_lon_to_vertex([bb_max[0], bb_min[1]], globe_radius);
                 let bl = lat_lon_to_vertex([bb_min[0], bb_max[1]], globe_radius);
                 let br = lat_lon_to_vertex(bb_max, globe_radius);
 
-                let centroid = ultraviolet::Vec3::from(tl) + ultraviolet::Vec3::from(br);
-                let centroid = centroid.normalized() * globe_radius;
+                let centroid = centroid_accum / centroid_sum;
 
                 let bb = BoundingBox {
                     centroid: *centroid.as_array(), tl, tr, bl, br,

@@ -368,7 +368,7 @@ impl backend::Harness for Globe {
         encoder: &mut wgpu::CommandEncoder,
         surface: &wgpu::TextureView,
     ) -> anyhow::Result<()> {       
-        self.submit_globe_pass(encoder, surface);
+        self.submit_globe_pass(encoder, surface)?;
 
         self.submit_feature_pass(encoder, surface)?;
 
@@ -385,9 +385,7 @@ impl backend::Harness for Globe {
             winit::event::DeviceEvent::Key(winit::event::RawKeyEvent { 
                 physical_key: PhysicalKey::Code(KeyCode::Space), 
                 state: winit::event::ElementState::Released,
-            }) => {
-                self.features.queue(); true
-            },
+            }) => { self.features.queue(); true },
             _ => self.camera.handle_event(event),
         }  
     }
@@ -446,12 +444,9 @@ impl backend::Harness for Globe {
         }
 
         let mut visible_feature_labels = Vec::new();
-        // let mut visible_feature_indices = std::collections::HashSet::new();
 
         for ray in rays.iter().copied() {
             for (bb, idx) in bounding_boxes.iter().copied() {
-                // if visible_feature_indices.contains(&idx) { continue; }
-
                 let geom::BoundingBox { centroid, tl, tr, bl, br } = bb;
 
                 let a = util::intrs(eye, ray, tl, tr, bl, maxima_sq);
@@ -469,8 +464,6 @@ impl backend::Harness for Globe {
 
                         visible_feature_labels.push(label);
                     }
-
-                    // visible_feature_indices.insert(idx);
                 }
             }
         }
@@ -490,7 +483,7 @@ impl Globe {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         surface: &wgpu::TextureView,
-    ) {
+    ) -> anyhow::Result<()> {
         let Self {
             texture_bind_group,
             camera_bind_group,
@@ -538,6 +531,8 @@ impl Globe {
 
         // draw
         pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
+
+        Ok(())
     }
 
     fn submit_feature_pass(
