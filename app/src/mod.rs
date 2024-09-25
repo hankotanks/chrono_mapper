@@ -7,7 +7,7 @@ mod map_tex;
 use std::{mem, collections, io};
 
 #[derive(Clone, Copy)]
-pub struct GlobeConfig<'a> {
+pub struct Config<'a> {
     pub surface_format: wgpu::TextureFormat,
     pub font_asset_path: &'a str,
     pub font_family: &'a str,
@@ -24,13 +24,13 @@ pub struct GlobeConfig<'a> {
     pub feature_label_ray_density: u32,
 }
 
-impl backend::HarnessConfig for GlobeConfig<'static> {
+impl backend::AppConfig for Config<'static> {
     fn surface_format(self) -> wgpu::TextureFormat { 
         self.surface_format 
     }
 }
 
-pub struct Globe {
+pub struct App {
     assets: collections::HashMap<&'static str, &'static [u8]>,
     basemap_data: Option<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>>,
     texture: wgpu::Texture,
@@ -50,8 +50,8 @@ pub struct Globe {
     screen_resolution: winit::dpi::PhysicalSize<u32>,
 }
 
-impl backend::Harness for Globe {
-    type Config = GlobeConfig<'static>;
+impl backend::App for App {
+    type Config = Config<'static>;
 
     async fn new(
         config: Self::Config, 
@@ -449,7 +449,7 @@ impl backend::Harness for Globe {
     }
 }
 
-impl Globe {
+impl App {
     fn submit_globe_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -575,9 +575,9 @@ struct FeatureManager {
     globe_radius: f32,
 }
 
-impl From<GlobeConfig<'static>> for FeatureManager {
-    fn from(value: GlobeConfig<'static>) -> Self {
-        let GlobeConfig {
+impl From<Config<'static>> for FeatureManager {
+    fn from(value: Config<'static>) -> Self {
+        let Config {
             slices,
             stacks,
             globe_radius,

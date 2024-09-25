@@ -1,7 +1,3 @@
-mod globe;
-
-type App<'a> = backend::App::<'a, globe::GlobeConfig<'static>, globe::Globe>;
-
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Wrapper;
 
@@ -12,15 +8,17 @@ impl Wrapper {
     pub fn update_canvas(
         w: wasm_bindgen::JsValue, 
         h: wasm_bindgen::JsValue,
-    ) -> Result<(), String> { App::update_canvas(w, h) }
+    ) -> Result<(), String> { 
+        backend::update_canvas(w, h) 
+    }
 
     #[no_mangle]
     pub async fn run() -> Result<(), String> {
-        (App::new(CONFIG).await)?.run()
+        backend::start::<app::Config, app::App>(CONFIG).await
     }
 }
 
-const CONFIG: globe::GlobeConfig = globe::GlobeConfig { 
+const CONFIG: app::Config = app::Config { 
     surface_format: wgpu::TextureFormat::Rgba8Unorm,
     font_asset_path: "fonts/biolinium.ttf",
     font_family: "Linux Biolinium G",
