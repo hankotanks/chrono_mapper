@@ -19,7 +19,6 @@ pub struct Camera {
     up: [f32; 3],
     aspect: f32,
     fovy: f32,
-    znear: f32,
     zfar: f32,
     locked: bool,
 }
@@ -39,7 +38,6 @@ impl Camera {
             up: [0., 1., 0.],
             aspect: 1.,
             fovy: std::f32::consts::PI / 2.,
-            znear: 0.1,
             zfar: globe_radius * DISTANCE_MULT * 2.,
             locked: true,
         }
@@ -53,10 +51,10 @@ impl Camera {
         let mult = ultraviolet::Vec3::from(self.eye).mag().abs() / //
             self.globe_radius;
 
-        let mult_min = 1. + self.znear;
-        let mult_max = 1. + (2. / 3.);
+        const MULT_MIN: f32 = 1.1;
+        const MULT_MAX: f32 = 1.666667;
 
-        let mult = (mult - mult_min) / (mult_max - mult_min) + mult_min - 1.;
+        let mult = (mult - MULT_MIN) / (MULT_MAX - MULT_MIN) + MULT_MIN - 1.;
 
         match event {
             winit::event::DeviceEvent::Button { button: 0, state, } => {
@@ -130,7 +128,6 @@ impl Camera {
             up, 
             fovy,
             aspect,
-            znear,
             zfar, ..
         } = self;
 
@@ -143,7 +140,7 @@ impl Camera {
         let proj = ultraviolet::projection::rh_ydown::perspective_gl(
             *fovy,
             *aspect,
-            *znear,
+            0.1,
             *zfar,
         );
 

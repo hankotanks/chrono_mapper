@@ -134,7 +134,6 @@ pub fn intrs(
     } else {
         let w = e2.dot(q) / det;
 
-        // TODO: hard-coded near clipping plane value
         match w * w > maxima_sq || w < 0.1 { 
             true => f32::MAX,
             false => (ray * w).mag(),

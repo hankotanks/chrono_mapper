@@ -47,7 +47,8 @@ const CONFIG: globe::GlobeConfig = globe::GlobeConfig {
         "features/world_1279.geojson",
         "features/world_1300.geojson",
         "features/world_1400.geojson",
-        "features/world_1492.geojson",
+        // TODO: A better approach to multi-layered features
+        // "features/world_1492.geojson",
         "features/world_1500.geojson",
         "features/world_1530.geojson",
         "features/world_1600.geojson",

@@ -391,8 +391,17 @@ impl backend::Harness for Globe {
             );
         }
 
-        if let Some(new_feature_geometry) = features.load_if_ready(device, assets) {
-            mem::replace(feature_geometry, new_feature_geometry).destroy();
+        if let Some(repl) = features.load_if_ready(device, assets) {
+            mem::replace(feature_geometry, repl).destroy();
+
+            feature_labels.queue_labels_for_display(
+                &feature_geometry.metadata,
+                screen_rays,
+                camera_uniform,
+                *globe_radius,
+            );
+
+            feature_labels.prepare(device, queue, *screen_resolution)?;
         }
 
         Ok(())
@@ -420,7 +429,11 @@ impl backend::Harness for Globe {
             winit::event::DeviceEvent::Key(winit::event::RawKeyEvent { 
                 physical_key: PhysicalKey::Code(KeyCode::Space), 
                 state: winit::event::ElementState::Released,
-            }) => { self.features.queue(); true },
+            }) => {
+                self.features.queue();
+
+                true 
+            },
             _ => self.camera.handle_event(event),
         }  
     }
@@ -434,12 +447,6 @@ impl backend::Harness for Globe {
 
         self.screen_resolution = size;
     }
-    
-    fn handle_mouse_click(
-        &mut self,
-        _button: winit::event::MouseButton,
-        _cursor: winit::dpi::PhysicalPosition<f32>,
-    ) -> bool { /* TODO */ false }
 }
 
 impl Globe {
