@@ -22,6 +22,8 @@ impl Wrapper {
 
 const CONFIG: globe::GlobeConfig = globe::GlobeConfig { 
     surface_format: wgpu::TextureFormat::Rgba8Unorm,
+    font_asset_path: "fonts/biolinium.ttf",
+    font_family: "Linux Biolinium G",
     slices: 100,
     stacks: 100,
     globe_radius: 10000.,
@@ -45,7 +47,8 @@ const CONFIG: globe::GlobeConfig = globe::GlobeConfig {
         "features/world_1279.geojson",
         "features/world_1300.geojson",
         "features/world_1400.geojson",
-        "features/world_1492.geojson",
+        // TODO: A better approach to multi-layered features
+        // "features/world_1492.geojson",
         "features/world_1500.geojson",
         "features/world_1530.geojson",
         "features/world_1600.geojson",
@@ -67,5 +70,5 @@ const CONFIG: globe::GlobeConfig = globe::GlobeConfig {
         "features/world_2010.geojson",
     ],
     features_shader_asset_path: "shaders/render_features.wgsl",
-    debug_font_asset_path: "fonts/biolinium.ttf",
+    feature_label_ray_density: 15,
 };

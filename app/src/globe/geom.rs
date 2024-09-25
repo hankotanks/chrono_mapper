@@ -1,4 +1,4 @@
-use std::{hash, ops};
+use super::util;
 
 pub struct Geometry<T: bytemuck::Pod + bytemuck::Zeroable, M: Default> {
     #[allow(dead_code)]
@@ -88,18 +88,20 @@ impl FeatureVertex {
     }
 }
 
-#[derive(Default)]
-pub struct FeatureMetadata {
-    indices: Vec<usize>,
-    entries: Vec<Metadata>,
+#[derive(Clone, Copy)]
+pub struct BoundingBox {
+    pub centroid: [f32; 3],
+    pub tl: [f32; 3],
+    pub tr: [f32; 3],
+    pub bl: [f32; 3],
+    pub br: [f32; 3],
 }
 
-impl ops::Index<usize> for FeatureMetadata {
-    type Output = Metadata;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.entries[self.indices[index]]
-    }
+#[derive(Default)]
+pub struct FeatureMetadata {
+    pub entries: Vec<Metadata>,
+    pub colors: Vec<[u8; 3]>,
+    pub bounding_boxes: Vec<(BoundingBox, usize)>,
 }
 
 impl Geometry<GlobeVertex, ()> {
@@ -259,25 +261,6 @@ impl Geometry<FeatureVertex, FeatureMetadata> {
     }
 }
 
-
-#[allow(unused_parens)]
-fn hashable_to_rgba8(name: &(impl hash::Hash)) -> [u8; 4] {
-    use hash::Hasher as _;
-
-    let mut hasher = hash::DefaultHasher::new();
-
-    name.hash(&mut hasher);
-
-    let hashed = hasher.finish();
-
-    [
-        ((hashed & 0xFF0000) >> 16) as u8,
-        ((hashed & 0x00FF00) >> 8) as u8,
-        (hashed & 0x0000FF) as u8,
-        255u8,
-    ]
-}
-
 type Metadata = serde_json::Map<String, serde_json::Value>;
 
 struct TempFeature<'a> {
@@ -404,10 +387,16 @@ impl TempFeatureGeometry {
         maxima: f32,
         globe_radius: f32,
     ) -> Result<(), earcutr::Error> {
+        use core::f32;
+
         let Self { 
             vertices, 
             indices,
-            feature_metadata,
+            feature_metadata: FeatureMetadata {
+                entries,
+                colors,
+                bounding_boxes,
+            },
         } = self;
 
         let TempFeature {
@@ -415,48 +404,87 @@ impl TempFeatureGeometry {
             metadata, 
         } = feature;
 
-        let color = hashable_to_rgba8(metadata);
+        let color_raw = util::hashable_to_rgb8(metadata);
+
         let color = [
-            color[0] as f32 / 255.,
-            color[1] as f32 / 255.,
-            color[2] as f32 / 255.,
+            color_raw[0] as f32 / 255.,
+            color_raw[1] as f32 / 255.,
+            color_raw[2] as f32 / 255.,
         ];
 
+        let globe_radius = globe_radius + 1.;
+
         if let geojson::Value::MultiPolygon(multi_polygon) = value {
+            let idx = entries.len();
+            
+            entries.push(metadata.clone());
+            colors.push(color_raw);
+
             for polygon in multi_polygon {
+                let mut bb_min = [f32::MAX; 2];
+                let mut bb_max = [f32::MIN; 2];
+
                 let (mut data, holes, dims) = earcutr::flatten(polygon);
 
-                let count = indices.len();
+                let vertices_len = vertices.len();
 
-                indices.extend({
-                    earcutr::earcut(&data, &holes, dims)?
-                        .chunks_exact(3)
-                        .flat_map(|tri| validate_triangle(&mut data, tri, maxima))
-                        .map(|idx| (idx + vertices.len()) as u32)
-                });
+                let polygon_indices: Vec<u32> = earcutr::earcut(&data, &holes, dims)?
+                    .chunks_exact(3)
+                    .flat_map(|tri| validate_triangle(&mut data, tri, maxima))
+                    .map(|idx| (idx + vertices_len) as u32)
+                    .collect();
 
-                let count = (indices.len() - count) / 3;
+                indices.extend_from_slice(&polygon_indices);
 
                 vertices.extend(data.chunks_exact(2).map(|pt| {
-                    use core::f32;
+                    let pt = [pt[1] as f32, pt[0] as f32];
 
-                    let lat = pt[1].to_radians() as f32 + f32::consts::PI;
-                    let lon = pt[0].to_radians() as f32;
-            
-                    FeatureVertex {
-                        pos: [
-                            lat.cos() * lon.cos() * (globe_radius + 1.) * -1., 
-                            lat.sin() * (globe_radius + 1.),
-                            lat.cos() * lon.sin() * (globe_radius + 1.),
-                        ], color,
-                    }
+                    bb_min[0] = bb_min[0].min(pt[0]);
+                    bb_min[1] = bb_min[1].min(pt[1]);
+
+                    bb_max[0] = bb_max[0].max(pt[0]);
+                    bb_max[1] = bb_max[1].max(pt[1]);
+
+                    let pos = util::lat_lon_to_vertex(pt, globe_radius);
+
+                    FeatureVertex { pos, color }
                 }));
 
-                let idx = feature_metadata.entries.len();
+                let mut centroid_sum = 0.;
+                let mut centroid_accum = ultraviolet::Vec3::zero();
 
-                feature_metadata.entries.push(metadata.clone());
-                feature_metadata.indices.extend((0..count).map(|_| idx));
-            }
+                for tri in polygon_indices.chunks_exact(3) {
+                    let [a_idx, b_idx, c_idx] = *tri else { unreachable!(); };
+
+                    if (holes.contains(&(a_idx as usize - vertices_len))) || //
+                        holes.contains(&(b_idx as usize - vertices_len)) || //
+                        holes.contains(&(c_idx as usize - vertices_len)) { continue; }
+
+                    let a = ultraviolet::Vec3::from(vertices[a_idx as usize].pos);
+                    let b = ultraviolet::Vec3::from(vertices[b_idx as usize].pos);
+                    let c = ultraviolet::Vec3::from(vertices[c_idx as usize].pos);
+
+                    let tri_centroid = (a + b + c) / 3.;
+
+                    let tri_area = (b - a).cross(c - a).mag();       
+
+                    centroid_sum += tri_area;
+                    centroid_accum += tri_centroid * tri_area;         
+                }
+
+                let tl = util::lat_lon_to_vertex(bb_min, globe_radius);
+                let tr = util::lat_lon_to_vertex([bb_max[0], bb_min[1]], globe_radius);
+                let bl = util::lat_lon_to_vertex([bb_min[0], bb_max[1]], globe_radius);
+                let br = util::lat_lon_to_vertex(bb_max, globe_radius);
+
+                let centroid = centroid_accum / centroid_sum;
+
+                let bb = BoundingBox {
+                    centroid: *centroid.as_array(), tl, tr, bl, br,
+                };
+
+                bounding_boxes.push((bb, idx));
+            }  
         }
 
         Ok(())
