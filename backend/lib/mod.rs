@@ -2,16 +2,14 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
 mod state;
 
-use std::{cell, collections, future, rc};
+use std::{cell, collections, fs, future, path, rc};
 
 pub trait App {
     type Config: AppConfig;
 
     fn new(
         config: Self::Config,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        assets: collections::HashMap<&'static str, &'static [u8]>,
+        device: &wgpu::Device, queue: &wgpu::Queue,
     ) -> impl future::Future<Output = anyhow::Result<Self>> where Self: Sized;
 
     fn update(
@@ -50,18 +48,13 @@ struct Package<'a, C: AppConfig, A: App<Config = C>> {
 
 impl<'a, C: AppConfig, A: App<Config = C>> Package<'a, C, A> {
     async fn new(config: C) -> anyhow::Result<Self> {
-        let mut assets = collections::HashMap::new();
-        for (tag, asset) in generate().into_iter() {
-            assets.insert(tag, asset.data);
-        }
-
         let event_loop = winit::event_loop::EventLoop::new()?;
 
         let state = {
             state::State::new(&event_loop, config.surface_format()).await
         }?;
 
-        let app = (A::new(config, &state.device, &state.queue, assets).await)?;
+        let app = (A::new(config, &state.device, &state.queue).await)?;
 
         Ok(Self { app, state, event_loop })
     }
@@ -182,4 +175,76 @@ pub fn update_canvas(
     Ok(())
 }
 
-pub static mut VIEWPORT: Option<winit::dpi::PhysicalSize<u32>> = None;
+static mut VIEWPORT: Option<winit::dpi::PhysicalSize<u32>> = None;
+
+#[derive(Clone, Copy)]
+pub enum AssetLocator { Static, External }
+
+#[derive(Clone, Copy)]
+pub struct AssetRef<'a> {
+    pub path: &'a str,
+    pub locator: AssetLocator,
+}
+
+pub struct Assets;
+
+impl Assets {
+    #[cfg(not(target_arch = "wasm32"))]
+    const WORKSPACE_ROOT: &'static str = env!("WORKSPACE_ROOT");
+
+    pub fn retrieve<'a>(aref: AssetRef<'a>) -> Option<&'static [u8]> {
+        use once_cell::sync::Lazy;
+
+        static STATIC: Lazy<collections::HashMap<&'static str, &'static [u8]>> = Lazy::new(|| {
+            let mut assets = collections::HashMap::new();
+            for (tag, asset) in generate().into_iter() {
+                assets.insert(tag, asset.data);
+            }
+        
+            assets
+        });
+
+        static mut DYNAMIC: Lazy<collections::HashMap<String, Vec<u8>>> = Lazy::new(|| {
+            collections::HashMap::new()
+        });
+
+        let AssetRef { path, locator } = aref;
+
+        match locator {
+            AssetLocator::Static if STATIC.contains_key(path) => Some(STATIC[path]),
+            AssetLocator::External => {
+                #[cfg(target_arch = "wasm32")] {
+                    #[cfg(feature = "gh-pages")] {
+                        println!("DEPLOYED: gh-pages");
+                    }
+
+                    #[cfg(not(feature = "gh-pages"))] {
+                        println!("DEPLOYED: local");
+                    }
+
+                    None
+                }
+
+                #[cfg(not(target_arch = "wasm32"))] unsafe {
+                    println!("DEPLOYED: native");
+
+                    match DYNAMIC.get(path) {
+                        Some(bytes) => Some(bytes.as_slice()),
+                        None => {
+                            let loc = path::Path::new(Self::WORKSPACE_ROOT).join(path);
+
+                            match fs::read(loc) {
+                                Ok(bytes) => {
+                                    DYNAMIC.insert(path.to_string(), bytes);
+                                    DYNAMIC.get(path).map(|b| b.as_slice())
+                                },
+                                Err(_) => None,
+                            }
+                        },
+                    }
+                }
+            },
+            _ => None,
+        }
+    }
+}

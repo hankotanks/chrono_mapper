@@ -1,24 +1,23 @@
-use std::{collections, hash, io};
+use std::{hash, io};
 
-pub fn load_shader<'a>(
-    assets: &collections::HashMap<&'a str, &'a [u8]>,
-    asset_path: &str,
-) -> Result<wgpu::ShaderModuleDescriptor<'a>, io::Error> {
-    fn load_shader_inner<'a>(
-        assets: &collections::HashMap<&'a str, &'a [u8]>,
-        asset_path: &str, 
-    ) -> Result<String, io::Error> {
-        if let Some(source) = assets.get(asset_path) {
+type ShaderResult<'a> = Result<wgpu::ShaderModuleDescriptor<'a>, io::Error>;
+
+pub fn load_shader<'a>(aref: backend::AssetRef<'a>) -> ShaderResult<'a> {
+    fn load_shader_inner<'a>(aref: backend::AssetRef<'a>) -> Result<String, io::Error> {
+        if let Some(source) = backend::Assets::retrieve(aref) {
             let source = String::from_utf8(source.to_vec())
                 .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
 
             let mut source_full = String::new();
             for includes in source.lines() {
                 if includes.contains("include") {
-                    if let Some(module) = includes.split_whitespace().nth(1) {
-                        let module = load_shader_inner(assets, module).unwrap();
-    
-                        source_full.push_str(&module);
+                    if let Some(path) = includes.split_whitespace().nth(1) {
+                        let aref_sub = backend::AssetRef {
+                            path,
+                            locator: aref.locator,
+                        };
+
+                        source_full.push_str(&load_shader_inner(aref_sub)?);
                     }
                 } else {
                     break;
@@ -35,21 +34,17 @@ pub fn load_shader<'a>(
 
 	Ok(wgpu::ShaderModuleDescriptor {
 		label: None,
-		source: wgpu::ShaderSource::Wgsl({
-            load_shader_inner(assets, asset_path)?.into()
-        }),
+		source: wgpu::ShaderSource::Wgsl(load_shader_inner(aref)?.into()),
 	})
 }
 
 #[allow(dead_code)]
 pub fn load_features_from_geojson<'a>(
-    assets: &collections::HashMap<&'a str, &'a [u8]>,
-    path: &'a str,
+    aref: backend::AssetRef<'a>,
 ) -> anyhow::Result<Vec<geojson::Feature>> {
     use std::str;
     
-    let data = assets
-        .get(path)
+    let data = backend::Assets::retrieve(aref)
         .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
 
     let features = str::from_utf8(data)?.parse::<geojson::GeoJson>()?;

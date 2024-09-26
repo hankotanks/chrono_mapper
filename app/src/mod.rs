@@ -4,21 +4,21 @@ mod util;
 mod camera;
 mod map_tex;
 
-use std::{mem, collections, io};
+use std::{mem, io};
 
 #[derive(Clone, Copy)]
 pub struct Config<'a> {
     pub surface_format: wgpu::TextureFormat,
-    pub font_asset_path: &'a str,
+    pub font_asset_path: backend::AssetRef<'a>,
     pub font_family: &'a str,
     pub slices: u32,
     pub stacks: u32,
     pub globe_radius: f32,
-    pub globe_shader_asset_path: &'a str,
-    pub basemap: &'a str,
+    pub globe_shader_asset_path: backend::AssetRef<'a>,
+    pub basemap: backend::AssetRef<'a>,
     pub basemap_padding: winit::dpi::PhysicalSize<u32>,
-    pub features: &'a [&'a str],
-    pub features_shader_asset_path: &'a str,
+    pub features: &'a [backend::AssetRef<'a>],
+    pub features_shader_asset_path: backend::AssetRef<'a>,
     // the number of rays to distribute across the screen's width
     // vertical ray density is proportional to the window's aspect ratio
     pub feature_label_ray_density: u32,
@@ -31,7 +31,6 @@ impl backend::AppConfig for Config<'static> {
 }
 
 pub struct App {
-    assets: collections::HashMap<&'static str, &'static [u8]>,
     basemap_data: Option<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>>,
     texture: wgpu::Texture,
     texture_bind_group: wgpu::BindGroup,
@@ -55,13 +54,9 @@ impl backend::App for App {
 
     async fn new(
         config: Self::Config, 
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        #[allow(unused_variables)]
-        assets: collections::HashMap<&'static str, &'static [u8]>,
+        device: &wgpu::Device, queue: &wgpu::Queue,
     ) -> anyhow::Result<Self> where Self: Sized {
-        let bytes = assets
-            .get(config.basemap)
+        let bytes = backend::Assets::retrieve(config.basemap)
             .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
 
         let basemap = map_tex::Basemap::from_bytes(bytes, config.basemap_padding)?;
@@ -185,7 +180,7 @@ impl backend::App for App {
         });
 
         let globe_pipeline_shader = device.create_shader_module({
-            util::load_shader(&assets, config.globe_shader_asset_path)?
+            util::load_shader(config.globe_shader_asset_path)?
         });
 
         let globe_pipeline = device.create_render_pipeline(&{
@@ -236,7 +231,7 @@ impl backend::App for App {
         });
 
         let feature_pipeline_shader = device.create_shader_module({
-            util::load_shader(&assets, config.features_shader_asset_path)?
+            util::load_shader(config.features_shader_asset_path)?
         });
 
         let feature_pipeline = device.create_render_pipeline(&{
@@ -278,16 +273,19 @@ impl backend::App for App {
             }
         }); 
 
+        let font_bytes = backend::Assets::retrieve(config.font_asset_path)
+            .ok_or(io::Error::from(io::ErrorKind::NotFound))?
+            .to_vec();
+
         let feature_labels = feature_labels::LabelEngine::new(
             device,
             queue,
             config.surface_format,
-            assets[config.font_asset_path].to_vec(),
+            font_bytes,
             config.font_family,
         );
 
         Ok(Self {
-            assets,
             basemap_data: Some(basemap.buffer),
             texture,
             texture_bind_group,
@@ -309,7 +307,6 @@ impl backend::App for App {
 
     fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> anyhow::Result<()> {
         let Self {
-            assets,
             basemap_data,
             texture,
             camera,
@@ -391,7 +388,7 @@ impl backend::App for App {
             );
         }
 
-        if let Some(repl) = features.load_if_ready(device, assets) {
+        if let Some(repl) = features.load_if_ready(device) {
             mem::replace(feature_geometry, repl).destroy();
 
             feature_labels.queue_labels_for_display(
@@ -568,7 +565,7 @@ impl App {
 
 struct FeatureManager {
     idx: usize,
-    features: &'static [&'static str],
+    features: &'static [backend::AssetRef<'static>],
     queued: bool,
     slices: u32,
     stacks: u32,
@@ -601,9 +598,7 @@ impl FeatureManager {
     }
 
     fn load_if_ready(
-        &mut self,
-        device: &wgpu::Device,
-        assets: &collections::HashMap<&str, &[u8]>,
+        &mut self, device: &wgpu::Device,
     ) -> Option<geom::Geometry<geom::FeatureVertex, geom::FeatureMetadata>> {
         if !self.queued { 
             return None; 
@@ -611,7 +606,7 @@ impl FeatureManager {
 
         let feature = self.features[self.idx];
 
-        let result = util::load_features_from_geojson(assets, feature)
+        let result = util::load_features_from_geojson(feature)
             .and_then(|features| {
                 geom::Geometry::build_feature_geometry_earcut(
                     device, 
