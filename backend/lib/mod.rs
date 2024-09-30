@@ -16,7 +16,7 @@ pub trait App {
         &mut self, 
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-    ) -> anyhow::Result<()>;
+    ) -> impl future::Future<Output = anyhow::Result<()>>;
 
     fn submit_passes(
         &mut self,
@@ -61,7 +61,7 @@ impl<'a, C: AppConfig, A: App<Config = C>> Package<'a, C, A> {
 }
 
 pub async fn start<C, A>(config: C) -> Result<(), String>
-    where C: AppConfig, A: App<Config = C> {
+    where C: AppConfig, A: App<Config = C> + 'static {
 
     #[cfg(target_arch = "wasm32")] {
         console_error_panic_hook::set_once();
@@ -85,6 +85,65 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
     let err = rc::Rc::new(cell::OnceCell::new());
     let err_inner = rc::Rc::clone(&err);
 
+
+    use winit::platform::web::EventLoopExtWebSys as _;
+
+    event_loop.spawn(move |event, event_target| {
+        use winit::event::{Event, WindowEvent};
+
+        if let Some(physical_size) = unsafe { VIEWPORT.take() } {
+            state.resize(physical_size);
+
+            app.handle_resize(
+                winit::dpi::PhysicalSize {
+                    width: state.surface_config.width,
+                    height: state.surface_config.height,
+                },
+                state.window.scale_factor() as f32,
+            );
+        }
+
+        match event {
+            Event::DeviceEvent { 
+                event, .. 
+            } if state.window.has_focus() => {
+                if app.handle_event(event) {
+                    state.window.request_redraw();
+                }
+            },
+            Event::WindowEvent {
+                event: WindowEvent::RedrawRequested,
+                window_id,
+            } if window_id == state.window.id() => {
+                if let Err(e) = futures::executor::block_on(app.update(&state.device, &state.queue)) {
+                    let _ = err_inner.get_or_init(|| e);
+
+                    event_target.exit();
+                }
+
+                if let Err(e) = state.process_encoder(|encoder, view| {
+                    app.submit_passes(encoder, view)
+                }) {
+                    let _ = err_inner.get_or_init(|| e);
+
+                    event_target.exit();
+                }
+            },
+            event => match state.run(event, event_target) {
+                Ok(Some(size)) => {
+                    app.handle_resize(size, state.window.scale_factor() as f32);
+                },
+                Ok(None) => { /*  */ },
+                Err(e) => {
+                    let _ = err_inner.get_or_init(|| e);
+    
+                    event_target.exit();
+                },
+            },
+        }
+    });
+
+    /*
     event_loop.run(move |event, event_target| {
         use winit::event::{Event, WindowEvent};
 
@@ -112,7 +171,7 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
                 event: WindowEvent::RedrawRequested,
                 window_id,
             } if window_id == state.window.id() => {
-                if let Err(e) = app.update(&state.device, &state.queue) {
+                if let Err(e) = futures::executor::block_on(app.update(&state.device, &state.queue)) {
                     let _ = err_inner.get_or_init(|| e);
 
                     event_target.exit();
@@ -138,7 +197,7 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
                 },
             },
         }
-    }).map_err(|e| e.to_string())?;
+    }).map_err(|e| e.to_string())?;*/
 
     if let Some(mut container) = rc::Rc::into_inner(err) {
         if let Some(e) = container.take() { Err(e.to_string())?; }
@@ -178,7 +237,14 @@ pub fn update_canvas(
 static mut VIEWPORT: Option<winit::dpi::PhysicalSize<u32>> = None;
 
 #[derive(Clone, Copy)]
-pub enum AssetLocator { Static, External }
+pub enum AssetLocator { 
+    Static, 
+    // relative to the project root
+    // on web, this is base URL
+    Local, 
+    // performs a GET for the resource
+    External,
+ }
 
 #[derive(Clone, Copy)]
 pub struct AssetRef<'a> {
@@ -186,13 +252,11 @@ pub struct AssetRef<'a> {
     pub locator: AssetLocator,
 }
 
-pub struct Assets;
-
-impl Assets {
+pub struct Assets; impl Assets {
     #[cfg(not(target_arch = "wasm32"))]
     const WORKSPACE_ROOT: &'static str = env!("WORKSPACE_ROOT");
 
-    pub fn retrieve<'a>(aref: AssetRef<'a>) -> Option<&'static [u8]> {
+    pub async fn retrieve<'a>(aref: AssetRef<'a>) -> Option<&'static [u8]> {
         use once_cell::sync::Lazy;
 
         static STATIC: Lazy<collections::HashMap<&'static str, &'static [u8]>> = Lazy::new(|| {
@@ -212,21 +276,32 @@ impl Assets {
 
         match locator {
             AssetLocator::Static if STATIC.contains_key(path) => Some(STATIC[path]),
-            AssetLocator::External => {
+            AssetLocator::Local => {
                 #[cfg(target_arch = "wasm32")] {
-                    #[cfg(feature = "gh-pages")] {
-                        println!("DEPLOYED: gh-pages");
+                    fn get_base_url() -> Result<String, state::err::WebError> {
+                        web_sys::window()
+                            .ok_or(state::err::WebError::new("obtain window"))?
+                            .location()
+                            .href()
+                            .map_err(|_| state::err::WebError::new("query website's base url"))
                     }
 
-                    #[cfg(not(feature = "gh-pages"))] {
-                        println!("DEPLOYED: local");
-                    }
+                    match get_base_url() {
+                        Ok(mut url) => {
+                            url.push_str(path);
 
-                    None
+                            log::info!("{:?}", url);
+
+                            let _ = req(&url).await;
+
+                            None
+                        },
+                        Err(_) => None
+                    }
                 }
 
                 #[cfg(not(target_arch = "wasm32"))] unsafe {
-                    println!("DEPLOYED: native");
+                    log::warn!("DEPLOYED: native");
 
                     match DYNAMIC.get(path) {
                         Some(bytes) => Some(bytes.as_slice()),
@@ -247,4 +322,30 @@ impl Assets {
             _ => None,
         }
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn req(url: &str) -> Result<&[u8], wasm_bindgen::prelude::JsValue> {
+    use wasm_bindgen::JsCast as _;
+
+    use wasm_bindgen_futures::JsFuture;
+    use web_sys::{Request, RequestInit, RequestMode, Response};
+
+    let opts = RequestInit::new();
+        opts.set_method("GET");
+        opts.set_mode(RequestMode::Cors);
+
+    let request = Request::new_with_str_and_init(&url, &opts)?;
+
+    let window = web_sys::window().unwrap();
+    let resp_value = JsFuture::from(window.fetch_with_request(&request)).await?;
+
+    assert!(resp_value.is_instance_of::<Response>());
+    let resp: Response = resp_value.dyn_into().unwrap();
+
+    let json = JsFuture::from(resp.json()?).await?;
+
+    println!("{:?}", json);
+
+    Ok(&[])
 }

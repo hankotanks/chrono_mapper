@@ -19,7 +19,7 @@ impl Wrapper {
 }
 
 const fn ext(path: &'static str) -> backend::AssetRef<'static> {
-    backend::AssetRef { path, locator: backend::AssetLocator::External }
+    backend::AssetRef { path, locator: backend::AssetLocator::Local }
 }
 
 const CONFIG: app::Config = app::Config { 

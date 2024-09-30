@@ -57,6 +57,7 @@ impl backend::App for App {
         device: &wgpu::Device, queue: &wgpu::Queue,
     ) -> anyhow::Result<Self> where Self: Sized {
         let bytes = backend::Assets::retrieve(config.basemap)
+            .await
             .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
 
         let basemap = map_tex::Basemap::from_bytes(bytes, config.basemap_padding)?;
@@ -180,7 +181,7 @@ impl backend::App for App {
         });
 
         let globe_pipeline_shader = device.create_shader_module({
-            util::load_shader(config.globe_shader_asset_path)?
+            (util::load_shader(config.globe_shader_asset_path).await)?
         });
 
         let globe_pipeline = device.create_render_pipeline(&{
@@ -231,7 +232,7 @@ impl backend::App for App {
         });
 
         let feature_pipeline_shader = device.create_shader_module({
-            util::load_shader(config.features_shader_asset_path)?
+            (util::load_shader(config.features_shader_asset_path).await)?
         });
 
         let feature_pipeline = device.create_render_pipeline(&{
@@ -274,6 +275,7 @@ impl backend::App for App {
         }); 
 
         let font_bytes = backend::Assets::retrieve(config.font_asset_path)
+            .await
             .ok_or(io::Error::from(io::ErrorKind::NotFound))?
             .to_vec();
 
@@ -305,7 +307,7 @@ impl backend::App for App {
         })
     }
 
-    fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> anyhow::Result<()> {
+    async fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> anyhow::Result<()> {
         let Self {
             basemap_data,
             texture,
@@ -388,7 +390,7 @@ impl backend::App for App {
             );
         }
 
-        if let Some(repl) = features.load_if_ready(device) {
+        if let Some(repl) = features.load_if_ready(device).await {
             mem::replace(feature_geometry, repl).destroy();
 
             feature_labels.queue_labels_for_display(
@@ -597,7 +599,7 @@ impl FeatureManager {
         self.queued = true; 
     }
 
-    fn load_if_ready(
+    async fn load_if_ready(
         &mut self, device: &wgpu::Device,
     ) -> Option<geom::Geometry<geom::FeatureVertex, geom::FeatureMetadata>> {
         if !self.queued { 
@@ -607,6 +609,7 @@ impl FeatureManager {
         let feature = self.features[self.idx];
 
         let result = util::load_features_from_geojson(feature)
+            .await
             .and_then(|features| {
                 geom::Geometry::build_feature_geometry_earcut(
                     device, 
