@@ -64,9 +64,14 @@ pub struct State<'a> {
     pub surface: wgpu::Surface<'a>,
     pub surface_config: wgpu::SurfaceConfiguration,
     pub cursor: Option<winit::dpi::PhysicalPosition<f32>>,
+    pub scroll_state: Option<chrono::DateTime<chrono::Local>>,
 }
 
 impl<'a> State<'a> {
+    // time to wait after a scroll event before sending 
+    // crate::AppEvent::MouseScrollStopped
+    const SCROLL_THRESHOLD: f32 = 200.;
+
     pub async fn new(
         event_loop: &winit::event_loop::EventLoop<Vec<u8>>,
         surface_format: wgpu::TextureFormat,
@@ -176,6 +181,7 @@ impl<'a> State<'a> {
             surface,
             surface_config,
             cursor: None,
+            scroll_state: None,
         })
     }
 
@@ -200,10 +206,12 @@ impl<'a> State<'a> {
         &mut self, 
         event: winit::event::Event<Vec<u8>>,
         event_target: &winit::event_loop::EventLoopWindowTarget<Vec<u8>>,
-    ) -> anyhow::Result<Option<crate::AppEvent>> {
+    ) -> anyhow::Result<Vec<crate::AppEvent>> {
         use winit::event::{Event, WindowEvent, KeyEvent, ElementState};
 
         use winit::keyboard::{Key, NamedKey};
+
+        let mut curr = Vec::with_capacity(2);
 
         match event {
             Event::WindowEvent { 
@@ -214,11 +222,7 @@ impl<'a> State<'a> {
                         logical_key: Key::Named(NamedKey::Escape), ..
                     }, ..
                 }
-            } if window_id == self.window.id() => {
-                event_target.exit();
-
-                Ok(None)
-            },
+            } if window_id == self.window.id() => event_target.exit(),
             Event::WindowEvent { 
                 event: WindowEvent::Resized(physical_size), 
                 window_id, .. 
@@ -246,23 +250,19 @@ impl<'a> State<'a> {
                     height: surface_config.height,
                 };
 
-                Ok(Some(crate::AppEvent::Resized(size)))
+                curr.push(crate::AppEvent::Resized(size));
             },
             Event::WindowEvent { 
                 event: WindowEvent::CursorMoved { position, .. }, 
                 window_id, .. 
             } if window_id == self.window.id() => {
                 let _ = self.cursor.insert(position.cast());
-
-                Ok(None)
             },
             Event::WindowEvent { 
                 event: WindowEvent::CursorLeft { .. }, 
                 window_id, .. 
             } if window_id == self.window.id() => {
                 let _ = self.cursor.take();
-
-                Ok(None)
             },
             Event::WindowEvent { 
                 event: winit::event::WindowEvent::KeyboardInput { 
@@ -272,7 +272,7 @@ impl<'a> State<'a> {
                     }, .. 
                 }, window_id, .. 
             } if window_id == self.window.id() => {
-                Ok(Some(crate::AppEvent::Key { code, state }))
+                curr.push(crate::AppEvent::Key { code, state });
             },
             Event::WindowEvent { 
                 event: winit::event::WindowEvent::MouseInput { 
@@ -282,17 +282,16 @@ impl<'a> State<'a> {
             } if window_id == self.window.id() => match self.cursor {
                 Some(cursor) => {
                     let cursor = crate::Position::from(cursor);
-
-                    Ok(Some(crate::AppEvent::Mouse { button, state, cursor }))
-                },
-                None => Ok(None),
+                    
+                    curr.push(crate::AppEvent::Mouse { button, state, cursor });
+                }, None => { /*  */ },
             },
             Event::DeviceEvent {
                 event: winit::event::DeviceEvent::MouseMotion { 
                     delta: (x, y),
                 }, ..
             } => {
-                Ok(Some(crate::AppEvent::MouseMotion { x: x as f32, y: y as f32 }))
+                curr.push(crate::AppEvent::MouseMotion { x: x as f32, y: y as f32 });
             },
             Event::DeviceEvent {
                 event: winit::event::DeviceEvent::MouseWheel { 
@@ -306,10 +305,46 @@ impl<'a> State<'a> {
                     ) => (self.window.scale_factor() * scroll) as f32 / 270.,
                 } * -1.;
 
-                Ok(Some(crate::AppEvent::MouseScroll { delta }))
+                curr.push(crate::AppEvent::MouseScroll { delta });
+
+                event_target.set_control_flow({
+                    winit::event_loop::ControlFlow::Poll
+                });
+
+                self.scroll_state = Some(chrono::Local::now());
             },
-            _ => Ok(None),
+            _ => { /*  */ },
         }
+
+        let check = match curr.first() {
+            Some(crate::AppEvent::MouseScroll { .. }) => false,
+            _ => true,
+        };
+
+        if check {
+            if let Some(timestamp) = self.scroll_state.as_ref() {
+                let temp = chrono::Local::now();
+    
+                let duration = timestamp
+                    .signed_duration_since(temp)
+                    .abs()
+                    .num_milliseconds() as f32;
+    
+                if duration > Self::SCROLL_THRESHOLD {
+                    curr.push(crate::AppEvent::MouseScrollStopped);
+                }
+            }
+        }
+
+        if let Some(crate::AppEvent::MouseScrollStopped) = curr.last() {
+            self.scroll_state = None;
+
+            event_target.set_control_flow({
+                winit::event_loop::ControlFlow::Wait
+            });
+        }
+
+        Ok(curr)
     }
 
     pub fn process_encoder<F>(&self, mut op: F) -> anyhow::Result<()> 

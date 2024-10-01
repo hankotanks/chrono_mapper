@@ -16,54 +16,59 @@ pub struct Camera {
     eye: [f32; 3],
     target: [f32; 3],
     up: [f32; 3],
-    fovy: f32,
-    zfar: f32,
-    locked: bool,
+    vertical_fov: f32,
+    far_plane: f32,
+    dragging: bool,
+    scrolling: bool,
 }
 
 impl Camera {
+    const MULT_DIST: f32 = 1.5;
+
+    const MULT_MIN: f32 = 1.1;
+    const MULT_MAX: f32 = 1.666667;
+
     pub fn new(globe_radius: f32) -> Self {
-        const DISTANCE_MULT: f32 = 1.5;
+        let distance = globe_radius * Self::MULT_DIST;
 
         Self {
-            distance: globe_radius * DISTANCE_MULT,
+            distance,
             globe_radius,
             pitch: 0.,
             yaw: 0.,
-            eye: [0., 0., globe_radius * DISTANCE_MULT * -1.],
+            eye: [0., 0., distance * -1.],
             target: [0.; 3],
             up: [0., 1., 0.],
-            fovy: std::f32::consts::PI / 2.,
-            zfar: globe_radius * DISTANCE_MULT * 2.,
-            locked: true,
+            vertical_fov: std::f32::consts::PI / 2.,
+            far_plane: distance * 2.,
+            dragging: false,
+            scrolling: false,
         }
     }
 
     pub fn movement_in_progress(&self) -> bool {
-        !self.locked
+        self.dragging || self.scrolling
     }
 
     pub fn handle_event(&mut self, event: backend::AppEvent) -> bool {
         let mult = ultraviolet::Vec3::from(self.eye).mag().abs() / //
             self.globe_radius;
 
-        const MULT_MIN: f32 = 1.1;
-        const MULT_MAX: f32 = 1.666667;
-
-        let mult = (mult - MULT_MIN) / (MULT_MAX - MULT_MIN) + MULT_MIN - 1.;
+        let mult = (mult - Self::MULT_MIN) / //
+            (Self::MULT_MAX - Self::MULT_MIN) + Self::MULT_MIN - 1.;
 
         match event {
             backend::AppEvent::Mouse { 
                 button: backend::event::MouseButton::Left, 
                 state, ..
             } => {
-                let temp = self.locked;
+                let temp = self.dragging;
 
-                self.locked = matches!(
-                    state, backend::event::ElementState::Released
+                self.dragging = matches!(
+                    state, backend::event::ElementState::Pressed
                 );
                 
-                self.locked != temp
+                self.dragging != temp
             },
             backend::AppEvent::MouseScroll { delta } => {
                 let lower = delta < 0. && mult > 0.0;
@@ -75,13 +80,20 @@ impl Camera {
 
                     self.distance += delta * mult;
 
+                    self.scrolling = true;
+
                     true
                 } else {
                     false
                 }
             },
+            backend::AppEvent::MouseScrollStopped => {
+                self.scrolling = false;
+
+                true
+            },
             backend::AppEvent::MouseMotion { x, y } => {
-                if !self.locked {
+                if self.dragging {
                     let mult = (((mult + 1.).ln()) * 0.0015).abs();
 
                     self.pitch -= y * mult;
@@ -93,7 +105,7 @@ impl Camera {
                     self.yaw -= x * mult;
                 }
 
-                !self.locked
+                self.dragging
             },
             _ => false,
         }
@@ -104,8 +116,8 @@ impl Camera {
             eye,
             target,
             up, 
-            fovy,
-            zfar, ..
+            vertical_fov: fovy,
+            far_plane: zfar, ..
         } = self;
 
         let view = ultraviolet::Mat4::look_at(

@@ -376,18 +376,18 @@ impl backend::App for App {
                         screen_rays.push(util::cursor_to_world_ray(view, proj, cursor));
                     }
                 }
-
-                feature_labels.queue_labels_for_display(
-                    &feature_geometry.metadata,
-                    screen_rays,
-                    camera_uniform,
-                    *globe_radius,
-                );
             },
             _ => { /*  */ },
         }
 
         if !camera.movement_in_progress() {
+            feature_labels.queue_labels_for_display(
+                &feature_geometry.metadata,
+                screen_rays,
+                camera_uniform,
+                *globe_radius,
+            );
+
             // TODO: Put more thought into how to handle this / if it needs to be
             if feature_labels.prepare(device, queue, *screen_resolution).is_err() {
                 // clear screen rays to prevent rendering broken labels

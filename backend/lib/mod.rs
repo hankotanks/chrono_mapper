@@ -180,12 +180,13 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
                 state.window.request_redraw();
             },
             event => match state.run(event, event_target) {
-                Ok(Some(event)) => {
-                    if app.handle_event(&state.device, &state.queue, &assets, event) {
-                        state.window.request_redraw();
+                Ok(events) => {
+                    for event in events {
+                        if app.handle_event(&state.device, &state.queue, &assets, event) {
+                            state.window.request_redraw();
+                        }
                     }
                 },
-                Ok(None) => { /*  */ },
                 Err(e) => {
                     let _ = err_inner.get_or_init(|| e);
     
