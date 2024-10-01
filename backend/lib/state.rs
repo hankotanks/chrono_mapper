@@ -200,60 +200,116 @@ impl<'a> State<'a> {
         &mut self, 
         event: winit::event::Event<Vec<u8>>,
         event_target: &winit::event_loop::EventLoopWindowTarget<Vec<u8>>,
-    ) -> anyhow::Result<Option<winit::dpi::PhysicalSize<u32>>> {
+    ) -> anyhow::Result<Option<crate::AppEvent>> {
         use winit::event::{Event, WindowEvent, KeyEvent, ElementState};
 
         use winit::keyboard::{Key, NamedKey};
 
         match event {
             Event::WindowEvent { 
-                event, 
+                window_id, 
+                event: WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
+                    event: KeyEvent {
+                        state: ElementState::Pressed,
+                        logical_key: Key::Named(NamedKey::Escape), ..
+                    }, ..
+                }
+            } if window_id == self.window.id() => {
+                event_target.exit();
+
+                Ok(None)
+            },
+            Event::WindowEvent { 
+                event: WindowEvent::Resized(physical_size), 
                 window_id, .. 
             } if window_id == self.window.id() => {
-                match event {
-                    WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
-                        event: KeyEvent {
-                            state: ElementState::Pressed,
-                            logical_key: Key::Named(NamedKey::Escape), ..
-                        }, ..
-                    } => event_target.exit(),
-                    WindowEvent::Resized(physical_size) => {
-                        let Self {
-                            window,
-                            required_limits,
-                            device,
-                            surface_config, 
-                            surface, ..
-                        } = self;
+                let Self {
+                    window,
+                    required_limits,
+                    device,
+                    surface_config, 
+                    surface, ..
+                } = self;
 
-                        surface_config_update(
-                            surface_config, 
-                            required_limits.clone(), 
-                            physical_size
-                        );
+                surface_config_update(
+                    surface_config, 
+                    required_limits.clone(), 
+                    physical_size
+                );
 
-                        surface.configure(device, surface_config);
+                surface.configure(device, surface_config);
 
-                        window.request_redraw();
+                window.request_redraw();
 
-                        return Ok(Some(winit::dpi::PhysicalSize {
-                            width: surface_config.width,
-                            height: surface_config.height,
-                        }));
-                    },
-                    WindowEvent::CursorMoved { position, .. } => {
-                        let _ = self.cursor.insert(position.cast());
-                    },
-                    WindowEvent::CursorLeft { .. } => {
-                        let _ = self.cursor.take();
-                    },
-                    _ => { /*  */ },
-                }
+                let size = crate::Size {
+                    width: surface_config.width,
+                    height: surface_config.height,
+                };
+
+                Ok(Some(crate::AppEvent::Resized(size)))
             },
-            _ => { /*  */ },
-        }
+            Event::WindowEvent { 
+                event: WindowEvent::CursorMoved { position, .. }, 
+                window_id, .. 
+            } if window_id == self.window.id() => {
+                let _ = self.cursor.insert(position.cast());
 
-        Ok(None)
+                Ok(None)
+            },
+            Event::WindowEvent { 
+                event: WindowEvent::CursorLeft { .. }, 
+                window_id, .. 
+            } if window_id == self.window.id() => {
+                let _ = self.cursor.take();
+
+                Ok(None)
+            },
+            Event::WindowEvent { 
+                event: winit::event::WindowEvent::KeyboardInput { 
+                    event: winit::event::KeyEvent {
+                        physical_key: winit::keyboard::PhysicalKey::Code(code),
+                        state, ..
+                    }, .. 
+                }, window_id, .. 
+            } if window_id == self.window.id() => {
+                Ok(Some(crate::AppEvent::Key { code, state }))
+            },
+            Event::WindowEvent { 
+                event: winit::event::WindowEvent::MouseInput { 
+                    button, 
+                    state, .. 
+                }, window_id, .. 
+            } if window_id == self.window.id() => match self.cursor {
+                Some(cursor) => {
+                    let cursor = crate::Position::from(cursor);
+
+                    Ok(Some(crate::AppEvent::Mouse { button, state, cursor }))
+                },
+                None => Ok(None),
+            },
+            Event::DeviceEvent {
+                event: winit::event::DeviceEvent::MouseMotion { 
+                    delta: (x, y),
+                }, ..
+            } => {
+                Ok(Some(crate::AppEvent::MouseMotion { x: x as f32, y: y as f32 }))
+            },
+            Event::DeviceEvent {
+                event: winit::event::DeviceEvent::MouseWheel { 
+                    delta,
+                }, ..
+            } => {
+                let delta = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                    winit::event::MouseScrollDelta::PixelDelta(
+                        winit::dpi::PhysicalPosition { y: scroll, .. }
+                    ) => (self.window.scale_factor() * scroll) as f32 / 270.,
+                } * -1.;
+
+                Ok(Some(crate::AppEvent::MouseScroll { delta }))
+            },
+            _ => Ok(None),
+        }
     }
 
     pub fn process_encoder<F>(&self, mut op: F) -> anyhow::Result<()> 

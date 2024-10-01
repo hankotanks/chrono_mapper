@@ -46,7 +46,7 @@ pub struct App {
     feature_labels: feature_labels::LabelEngine,
     screen_ray_density: u32,
     screen_rays: Vec<[f32; 3]>,
-    screen_resolution: winit::dpi::PhysicalSize<u32>,
+    screen_resolution: backend::Size,
 }
 
 impl backend::App for App {
@@ -297,7 +297,7 @@ impl backend::App for App {
             feature_labels,
             screen_ray_density: config.feature_label_ray_density,
             screen_rays: Vec::with_capacity(0),
-            screen_resolution: winit::dpi::PhysicalSize::default(),
+            screen_resolution: backend::Size::default(),
         })
     }
 
@@ -318,10 +318,8 @@ impl backend::App for App {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         assets: &backend::Assets,
-        event: winit::event::DeviceEvent,
+        event: backend::AppEvent,
     ) -> bool {
-        use winit::keyboard::{PhysicalKey, KeyCode};
-
         let Self {
             basemap_data,
             texture,
@@ -337,23 +335,26 @@ impl backend::App for App {
         } = self;
 
         match event {
-            winit::event::DeviceEvent::Key(winit::event::RawKeyEvent { 
-                physical_key: PhysicalKey::Code(KeyCode::Space), 
-                state: winit::event::ElementState::Released,
-            }) => features.request(assets),
-            _ => {
-                if !camera.handle_event(event) { return false; }
+            backend::AppEvent::Key { 
+                code: backend::event::KeyCode::Space, 
+                state: backend::event::ElementState::Released, 
+            } => features.request(assets),
+            backend::AppEvent::Resized(size) => {
+                *screen_resolution = size;
             },
+            event => {
+                if !camera.handle_event(event) {
+                    return false;
+                }
+            }
         }
-
-        let camera_movement = camera.movement_in_progress();
 
         let camera_uniform = camera
             .update()
-            .build_camera_uniform();
+            .build_camera_uniform(*screen_resolution);
 
         // generate rays if its okay to prepare labels
-        match (camera_movement, screen_rays.len()) {
+        match (camera.movement_in_progress(), screen_rays.len()) {
             (true, screen_ray_count) if screen_ray_count > 0 => screen_rays.clear(), 
             (false, 0) => {
                 let camera::CameraUniform {
@@ -361,7 +362,7 @@ impl backend::App for App {
                     proj, ..
                 } = camera_uniform;
 
-                let winit::dpi::PhysicalSize { width, height } = *screen_resolution;
+                let backend::Size { width, height } = *screen_resolution;
 
                 let gap = (width as f32 / *screen_ray_density as f32).ceil();
 
@@ -386,7 +387,7 @@ impl backend::App for App {
             _ => { /*  */ },
         }
 
-        if !camera_movement {
+        if !camera.movement_in_progress() {
             // TODO: Put more thought into how to handle this / if it needs to be
             if feature_labels.prepare(device, queue, *screen_resolution).is_err() {
                 // clear screen rays to prevent rendering broken labels
@@ -424,16 +425,6 @@ impl backend::App for App {
         true
     }
     
-    fn handle_resize(
-        &mut self,
-        size: winit::dpi::PhysicalSize<u32>,
-        scale: f32, 
-    ) {
-        self.camera.handle_resize(size, scale);
-
-        self.screen_resolution = size;
-    }
-    
     fn update(
         &mut self, 
         device: &wgpu::Device,
@@ -453,12 +444,10 @@ impl backend::App for App {
             Ok(repl) => {
                 mem::replace(feature_geometry, repl).destroy();
 
-                let camera_uniform = camera.build_camera_uniform();
-
                 feature_labels.queue_labels_for_display(
                     &feature_geometry.metadata,
                     screen_rays,
-                    camera_uniform,
+                    camera.build_camera_uniform(*screen_resolution),
                     *globe_radius,
                 );
     

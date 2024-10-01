@@ -159,7 +159,7 @@ impl LabelEngine {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        screen_resolution: winit::dpi::PhysicalSize<u32>,
+        screen_resolution: backend::Size,
     ) -> Result<(), glyphon::PrepareError> {
         let Self { 
             font_system, 
@@ -172,7 +172,7 @@ impl LabelEngine {
 
         let mut buffers = Vec::with_capacity(visible_feature_labels.len());
 
-        let winit::dpi::PhysicalSize { width, height } = screen_resolution;
+        let backend::Size { width, height } = screen_resolution;
         
         for Label { text, pos, color, feature_area } in visible_feature_labels.drain(0..) {
             let pos = [

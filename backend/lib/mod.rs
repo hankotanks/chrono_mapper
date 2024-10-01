@@ -5,7 +5,53 @@ mod state;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
+// contains wrappers over winit::event
+// prevents `app` from requiring winit as a dependency
+pub mod event {
+    pub use winit::{
+        keyboard::KeyCode, 
+        event::MouseButton, 
+        event::ElementState,
+    };
+}
+
 use std::{cell, collections, future, io, rc};
+
+#[derive(Clone, Copy)]
+#[derive(Debug)]
+pub struct Position { pub x: f32, pub y: f32 }
+
+impl From<winit::dpi::PhysicalPosition<f32>> for Position {
+    fn from(value: winit::dpi::PhysicalPosition<f32>) -> Self {
+        let winit::dpi::PhysicalPosition { x, y } = value;
+
+        Self { x, y } 
+    }
+}
+
+#[derive(Default)]
+#[derive(Clone, Copy)]
+#[derive(Debug)]
+pub struct Size { pub width: u32, pub height: u32 }
+
+impl From<winit::dpi::PhysicalSize<u32>> for Size {
+    fn from(value: winit::dpi::PhysicalSize<u32>) -> Self {
+        let winit::dpi::PhysicalSize { width, height } = value;
+
+        Self { width, height } 
+    }
+}
+
+#[derive(Debug)]
+#[derive(Clone, Copy)]
+pub enum AppEvent {
+    Key {code: event::KeyCode, state: event::ElementState },
+    Mouse { button: event::MouseButton, state: event::ElementState, cursor: Position },
+    MouseScroll { delta: f32 },
+    MouseScrollStopped,
+    MouseMotion { x: f32, y: f32 },
+    Resized(Size)
+}
 
 pub trait App {
     type Config: AppConfig;
@@ -34,14 +80,8 @@ pub trait App {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         assets: &Assets,
-        event: winit::event::DeviceEvent,
+        event: AppEvent,
     ) -> bool;
-
-    fn handle_resize(
-        &mut self, 
-        size: winit::dpi::PhysicalSize<u32>,
-        scale: f32,
-    );
 }
 
 pub trait AppConfig: Copy {
@@ -105,23 +145,14 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
         if let Some(physical_size) = unsafe { VIEWPORT.take() } {
             state.resize(physical_size);
 
-            app.handle_resize(
-                winit::dpi::PhysicalSize {
-                    width: state.surface_config.width,
-                    height: state.surface_config.height,
-                },
-                state.window.scale_factor() as f32,
-            );
+            let event = AppEvent::Resized(physical_size.into());
+
+            if app.handle_event(&state.device, &state.queue, &assets, event) {
+                state.window.request_redraw();
+            }
         }
 
         match event {
-            Event::DeviceEvent { 
-                event, .. 
-            } if state.window.has_focus() => {
-                if app.handle_event(&state.device, &state.queue, &assets, event) {
-                    state.window.request_redraw();
-                }
-            },
             Event::WindowEvent {
                 event: WindowEvent::RedrawRequested,
                 window_id,
@@ -142,10 +173,12 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
                 }
 
                 state.window.request_redraw();
-            }
+            },
             event => match state.run(event, event_target) {
-                Ok(Some(size)) => {
-                    app.handle_resize(size, state.window.scale_factor() as f32);
+                Ok(Some(event)) => {
+                    if app.handle_event(&state.device, &state.queue, &assets, event) {
+                        state.window.request_redraw();
+                    }
                 },
                 Ok(None) => { /*  */ },
                 Err(e) => {

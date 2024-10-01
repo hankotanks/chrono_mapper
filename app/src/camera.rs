@@ -11,13 +11,11 @@ pub struct CameraUniform {
 pub struct Camera {
     distance: f32,
     globe_radius: f32,
-    scale: f32,
     pitch: f32,
     yaw: f32,
     eye: [f32; 3],
     target: [f32; 3],
     up: [f32; 3],
-    aspect: f32,
     fovy: f32,
     zfar: f32,
     locked: bool,
@@ -30,13 +28,11 @@ impl Camera {
         Self {
             distance: globe_radius * DISTANCE_MULT,
             globe_radius,
-            scale: 1.,
             pitch: 0.,
             yaw: 0.,
             eye: [0., 0., globe_radius * DISTANCE_MULT * -1.],
             target: [0.; 3],
             up: [0., 1., 0.],
-            aspect: 1.,
             fovy: std::f32::consts::PI / 2.,
             zfar: globe_radius * DISTANCE_MULT * 2.,
             locked: true,
@@ -47,7 +43,7 @@ impl Camera {
         !self.locked
     }
 
-    pub fn handle_event(&mut self, event: winit::event::DeviceEvent) -> bool {
+    pub fn handle_event(&mut self, event: backend::AppEvent) -> bool {
         let mult = ultraviolet::Vec3::from(self.eye).mag().abs() / //
             self.globe_radius;
 
@@ -57,7 +53,10 @@ impl Camera {
         let mult = (mult - MULT_MIN) / (MULT_MAX - MULT_MIN) + MULT_MIN - 1.;
 
         match event {
-            winit::event::DeviceEvent::Button { button: 0, state, } => {
+            backend::AppEvent::Mouse { 
+                button: backend::event::MouseButton::Left, 
+                state, ..
+            } => {
                 let temp = self.locked;
 
                 self.locked = matches!(
@@ -66,68 +65,47 @@ impl Camera {
                 );
                 
                 self.locked != temp
-            }
-            winit::event::DeviceEvent::MouseWheel { delta, .. } => {
-                let scroll_amount = -match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, scroll) => //
-                        scroll * 1.0,
-                    winit::event::MouseScrollDelta::PixelDelta(
-                        winit::dpi::PhysicalPosition { y: scroll, .. }
-                    ) => {
-                        (self.scale * scroll as f32) / 270.
-                    }
-                };
-
-                let lower = scroll_amount < 0. && mult > 0.0;
-                let upper = scroll_amount > 0. && mult < 1.0;
+            },
+            backend::AppEvent::MouseScroll { delta } => {
+                let lower = delta < 0. && mult > 0.0;
+                let upper = delta > 0. && mult < 1.0;
 
                 if lower || upper {
                     let mult = std::f32::consts::E.powf(mult);
                     let mult = mult * self.globe_radius * 0.01;
 
-                    self.distance += scroll_amount * mult;
+                    self.distance += delta * mult;
 
                     true
                 } else {
                     false
                 }
             },
-            winit::event::DeviceEvent::MouseMotion { delta: (x, y) } => {
+            backend::AppEvent::MouseMotion { x, y } => {
                 if !self.locked {
                     let mult = (((mult + 1.).ln()) * 0.0015).abs();
 
-                    self.pitch -= y as f32 * mult;
+                    self.pitch -= y * mult;
                     self.pitch = self.pitch.clamp(
                         -1.0 * std::f32::consts::PI / 2. + f32::EPSILON, 
                         std::f32::consts::PI / 2. - f32::EPSILON,
                     );
 
-                    self.yaw -= x as f32 * mult;
+                    self.yaw -= x * mult;
                 }
 
                 !self.locked
-            }
+            },
             _ => false,
         }
     }
 
-    pub fn handle_resize(
-        &mut self, 
-        size: winit::dpi::PhysicalSize<u32>,
-        scale: f32,
-    ) {
-        self.aspect = (size.width as f32) / (size.height as f32);
-
-        self.scale = scale;
-    }
-
-    pub fn build_camera_uniform(&self) -> CameraUniform {
+    pub fn build_camera_uniform(&self, screen_resolution: backend::Size) -> CameraUniform {
         let Self {
             eye,
             target,
             up, 
             fovy,
-            aspect,
             zfar, ..
         } = self;
 
@@ -137,9 +115,11 @@ impl Camera {
             ultraviolet::Vec3::from(up),
         );
 
+        let backend::Size { width, height } = screen_resolution;
+
         let proj = ultraviolet::projection::rh_ydown::perspective_gl(
             *fovy,
-            *aspect,
+            width as f32 / height as f32,
             0.1,
             *zfar,
         );
