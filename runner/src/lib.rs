@@ -24,22 +24,14 @@ const fn ext(path: &'static str) -> backend::AssetRef<'static> {
 
 const CONFIG: app::Config = app::Config { 
     surface_format: wgpu::TextureFormat::Rgba8Unorm,
-    font_asset_path: backend::AssetRef {
-        path: "fonts/biolinium.ttf",
-        locator: backend::AssetLocator::Static,
-    },
+    font_asset_path: "fonts/biolinium.ttf",
     font_family: "Linux Biolinium G",
     slices: 100,
     stacks: 100,
     globe_radius: 10000.,
-    globe_shader_asset_path: backend::AssetRef {
-        path: "shaders/render_basemap.wgsl",
-        locator: backend::AssetLocator::Static,
-    },
-    basemap: backend::AssetRef {
-        path: "blue_marble_2048.tif",
-        locator: backend::AssetLocator::Static,
-    }, // https://visibleearth.nasa.gov/images/57752/blue-marble-land-surface-shallow-water-and-shaded-topography
+    globe_shader_asset_path: "shaders/render_basemap.wgsl",
+    // https://visibleearth.nasa.gov/images/57752/blue-marble-land-surface-shallow-water-and-shaded-topography
+    basemap: "blue_marble_2048.tif", 
     basemap_padding: winit::dpi::PhysicalSize { width: 0, height: 0 },
     features: &[
         // https://github.com/aourednik/historical-basemaps/tree/master
@@ -80,9 +72,6 @@ const CONFIG: app::Config = app::Config {
         ext("features/world_2000.geojson"),
         ext("features/world_2010.geojson"),
     ],
-    features_shader_asset_path: backend::AssetRef {
-        path: "shaders/render_features.wgsl",
-        locator: backend::AssetLocator::Static,
-    },
+    features_shader_asset_path: "shaders/render_features.wgsl",
     feature_label_ray_density: 15,
 };

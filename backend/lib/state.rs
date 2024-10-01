@@ -1,36 +1,7 @@
 use std::sync;
 
 #[cfg(target_arch = "wasm32")]
-pub mod err {
-    use std::{fmt, error};
-
-    #[derive(Debug)]
-    pub struct WebError { 
-        op: &'static str, 
-    }
-    
-    impl WebError {
-        pub const fn new(op: &'static str) -> Self {
-            Self { op }
-        }
-    }
-    
-    impl fmt::Display for WebError {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(f, "Failed to {}", self.op)
-        }
-    }
-    
-    impl error::Error for WebError {
-        fn source(&self) -> Option<&(dyn error::Error + 'static)> { 
-            None 
-        }
-
-        fn cause(&self) -> Option<&dyn error::Error> { 
-            self.source() 
-        }
-    }
-}
+use super::web;
 
 #[cfg(target_arch = "wasm32")]
 fn surface_config_update(
@@ -97,7 +68,7 @@ pub struct State<'a> {
 
 impl<'a> State<'a> {
     pub async fn new(
-        event_loop: &winit::event_loop::EventLoop<()>,
+        event_loop: &winit::event_loop::EventLoop<Vec<u8>>,
         surface_format: wgpu::TextureFormat,
     ) -> anyhow::Result<Self> {
         #[allow(non_snake_case)]
@@ -116,24 +87,24 @@ impl<'a> State<'a> {
                 use winit::platform::web::WindowExtWebSys as _;
 
                 let document = web_sys::window()
-                    .ok_or(err::WebError::new("obtain window"))?
+                    .ok_or(web::WebError::new("obtain window"))?
                     .document()
-                    .ok_or(err::WebError::new("obtain document"))?;
+                    .ok_or(web::WebError::new("obtain document"))?;
 
                 let elem: web_sys::Element = window
                     .as_ref()
                     .canvas()
-                    .ok_or(err::WebError::new("create canvas"))?
+                    .ok_or(web::WebError::new("create canvas"))?
                     .into();
 
                 // Insert the canvas into the body
                 document.body()
-                    .ok_or(err::WebError::new("obtain body"))?
+                    .ok_or(web::WebError::new("obtain body"))?
                     .append_child(&elem.clone().into())
-                    .map_err(|_| err::WebError::new("append canvas to body"))?;
+                    .map_err(|_| web::WebError::new("append canvas to body"))?;
 
                 let handle = elem.dyn_into::<web_sys::HtmlCanvasElement>()
-                    .map_err(|_| err::WebError::new("reference render canvas"))?;
+                    .map_err(|_| web::WebError::new("reference render canvas"))?;
 
                 Ok(wgpu::SurfaceTarget::Canvas(handle))
             }
@@ -227,8 +198,8 @@ impl<'a> State<'a> {
 
     pub fn run(
         &mut self, 
-        event: winit::event::Event<()>,
-        event_target: &winit::event_loop::EventLoopWindowTarget<()>,
+        event: winit::event::Event<Vec<u8>>,
+        event_target: &winit::event_loop::EventLoopWindowTarget<Vec<u8>>,
     ) -> anyhow::Result<Option<winit::dpi::PhysicalSize<u32>>> {
         use winit::event::{Event, WindowEvent, KeyEvent, ElementState};
 
