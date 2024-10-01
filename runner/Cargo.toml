@@ -16,8 +16,6 @@ path = "../app"
 
 [dependencies]
 log = { workspace = true }
-wgpu = { workspace = true }
-winit = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { workspace = true }

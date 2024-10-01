@@ -27,7 +27,6 @@ anyhow = { workspace = true }
 log = { workspace = true }
 bytemuck = { version = "1.4", features = ["derive"] }
 wgpu = { workspace = true }
-winit = { workspace = true }
 ultraviolet = { version = "0.9.2", features = ["bytemuck"] }
 earcutr = "0.4.3"
 glyphon = "0.5.0"

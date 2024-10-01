@@ -15,6 +15,11 @@ pub mod event {
     };
 }
 
+// same situation as event
+pub mod display {
+    pub use wgpu::TextureFormat as SurfaceFormat;
+}
+
 use std::{cell, collections, future, io, rc};
 
 #[derive(Clone, Copy)]
@@ -85,7 +90,7 @@ pub trait App {
 }
 
 pub trait AppConfig: Copy {
-    fn surface_format(self) -> wgpu::TextureFormat;
+    fn surface_format(self) -> display::SurfaceFormat;
 }
 
 struct Package<'a, C: AppConfig, A: App<Config = C>> {

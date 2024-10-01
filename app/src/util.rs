@@ -43,11 +43,11 @@ pub async fn load_shader(path: &str) -> ShaderResult<'_> {
 pub fn cursor_to_world_ray(
     view: [[f32; 4]; 4], 
     proj: [[f32; 4]; 4], 
-    cursor: winit::dpi::PhysicalPosition<f32>,
+    cursor: backend::Position,
 ) -> [f32; 3] {
     use ultraviolet::{Vec2, Vec4, Mat4};
 
-    let winit::dpi::PhysicalPosition { x, y } = cursor;
+    let backend::Position { x, y } = cursor;
 
     let Vec2 { 
         x, y,

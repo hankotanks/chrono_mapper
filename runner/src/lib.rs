@@ -23,7 +23,7 @@ const fn ext(path: &'static str) -> backend::AssetRef<'static> {
 }
 
 const CONFIG: app::Config = app::Config { 
-    surface_format: wgpu::TextureFormat::Rgba8Unorm,
+    surface_format: backend::display::SurfaceFormat::Rgba8Unorm,
     font_asset_path: "fonts/biolinium.ttf",
     font_family: "Linux Biolinium G",
     slices: 100,
@@ -32,7 +32,7 @@ const CONFIG: app::Config = app::Config {
     globe_shader_asset_path: "shaders/render_basemap.wgsl",
     // https://visibleearth.nasa.gov/images/57752/blue-marble-land-surface-shallow-water-and-shaded-topography
     basemap: "blue_marble_2048.tif", 
-    basemap_padding: winit::dpi::PhysicalSize { width: 0, height: 0 },
+    basemap_padding: backend::Size { width: 0, height: 0 },
     features: &[
         // https://github.com/aourednik/historical-basemaps/tree/master
         ext("features/world_100.geojson"),

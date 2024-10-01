@@ -8,7 +8,7 @@ use std::mem;
 
 #[derive(Clone, Copy)]
 pub struct Config<'a> {
-    pub surface_format: wgpu::TextureFormat,
+    pub surface_format: backend::display::SurfaceFormat,
     pub font_asset_path: &'a str,
     pub font_family: &'a str,
     pub slices: u32,
@@ -16,7 +16,7 @@ pub struct Config<'a> {
     pub globe_radius: f32,
     pub globe_shader_asset_path: &'a str,
     pub basemap: &'a str,
-    pub basemap_padding: winit::dpi::PhysicalSize<u32>,
+    pub basemap_padding: backend::Size,
     pub features: &'a [backend::AssetRef<'a>],
     pub features_shader_asset_path: &'a str,
     // the number of rays to distribute across the screen's width
@@ -25,7 +25,7 @@ pub struct Config<'a> {
 }
 
 impl backend::AppConfig for Config<'static> {
-    fn surface_format(self) -> wgpu::TextureFormat { 
+    fn surface_format(self) -> backend::display::SurfaceFormat { 
         self.surface_format 
     }
 }
@@ -371,7 +371,7 @@ impl backend::App for App {
                     for x in 0..*screen_ray_density {
                         let x = x as f32 / 5. - 1.;
 
-                        let cursor = winit::dpi::PhysicalPosition { x, y };
+                        let cursor = backend::Position { x, y };
 
                         screen_rays.push(util::cursor_to_world_ray(view, proj, cursor));
                     }
