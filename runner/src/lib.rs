@@ -1,3 +1,4 @@
+/*
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Wrapper;
 
@@ -16,7 +17,12 @@ impl Wrapper {
     pub async fn run() -> Result<(), String> {
         backend::start::<app::Config, app::App>(CONFIG).await
     }
-}
+}*/
+
+#[backend_macros::init(app::App, app::Config => CONFIG)]
+pub struct Wrapper;
+
+//backend_macros::init!(app::App, app::Config => CONFIG);
 
 const fn ext(path: &'static str) -> backend::AssetRef<'static> {
     backend::AssetRef { path, locator: backend::AssetLocator::Local }

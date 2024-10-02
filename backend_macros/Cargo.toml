@@ -1,0 +1,15 @@
+[package]
+name = "backend_macros"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "lib.rs"
+proc-macro = true
+
+[dependencies]
+quote = "1.0.37"
+proc-macro2 = "1.0.86"
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+wasm-bindgen-macro-support = "0.2.93"

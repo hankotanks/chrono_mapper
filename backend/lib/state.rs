@@ -316,12 +316,7 @@ impl<'a> State<'a> {
             _ => { /*  */ },
         }
 
-        let check = match curr.first() {
-            Some(crate::AppEvent::MouseScroll { .. }) => false,
-            _ => true,
-        };
-
-        if check {
+        if !matches!(curr.first(), Some(crate::AppEvent::MouseScroll { .. })) {
             if let Some(timestamp) = self.scroll_state.as_ref() {
                 let temp = chrono::Local::now();
     

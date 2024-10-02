@@ -1,3 +1,3 @@
 fn main() -> Result<(), String> {
-    pollster::block_on(lib::Wrapper::run())
+    backend_macros::run!(lib::Wrapper)
 }

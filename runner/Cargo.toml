@@ -11,15 +11,11 @@ crate-type = ["cdylib", "rlib"]
 [dependencies.backend]
 path = "../backend"
 
+[dependencies.backend_macros]
+path = "../backend_macros"
+
 [dependencies.app]
 path = "../app"
 
 [dependencies]
 log = { workspace = true }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = { workspace = true }
-wasm-bindgen-futures = { workspace = true }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-pollster = "0.3.0"

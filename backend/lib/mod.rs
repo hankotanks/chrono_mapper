@@ -3,7 +3,10 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 mod state;
 
 #[cfg(target_arch = "wasm32")]
-mod web;
+pub mod web;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native;
 
 // contains wrappers over winit::event
 // prevents `app` from requiring winit as a dependency

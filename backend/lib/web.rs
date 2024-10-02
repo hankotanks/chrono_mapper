@@ -1,12 +1,21 @@
 use std::{fmt, error};
 
+pub mod wasm_bindgen {
+    // TODO: I don't like re-exporting this
+    pub use wasm_bindgen::*;
+}
+
+pub mod wasm_bindgen_futures {
+    pub use wasm_bindgen_futures::*;
+}
+
 #[derive(Debug)]
-pub struct WebError { 
+pub(crate) struct WebError { 
     op: &'static str, 
 }
 
 impl WebError {
-    pub const fn new(op: &'static str) -> Self {
+    pub(crate) const fn new(op: &'static str) -> Self {
         Self { op }
     }
 }
@@ -27,7 +36,7 @@ impl error::Error for WebError {
     }
 }
 
-pub fn url() -> Result<String, WebError> {
+pub(crate) fn url() -> Result<String, WebError> {
     web_sys::window()
         .ok_or(WebError::new("obtain window"))?
         .location()
@@ -36,7 +45,7 @@ pub fn url() -> Result<String, WebError> {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub async fn req(
+pub(crate) async fn req(
     proxy: winit::event_loop::EventLoopProxy<Vec<u8>>,
     url: &str,
 ) -> Result<(), WebError> {
