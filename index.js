@@ -12,6 +12,8 @@ const exec = async () => {
         if(canvas == undefined) {
             sinceLastFocus = setTimeout(focusCanvas, 300);
         } else {
+            canvas.focus();
+            
             canvas.onblur = _ => {
                 setTimeout(_ => { canvas.focus(); }, 1);
             };
@@ -23,6 +25,25 @@ const exec = async () => {
             String(window.innerWidth), 
             String(window.innerHeight)
         );
+
+        const scaleCanvas = _ => {
+            const canvas = document.getElementsByTagName("canvas").item(0);
+
+            if(canvas != undefined) {
+                let x = window.innerWidth / canvas.width;
+                let y = window.innerHeight / canvas.height;
+
+                if(x < y) {
+                    canvas.style.width = `${window.innerWidth}px`;
+                    canvas.style.height = `${canvas.height * x}px`;
+                } else {
+                    canvas.style.width = `${canvas.width * y}px`;
+                    canvas.style.height = `${window.innerHeight}px`;
+                }
+            }
+        };
+
+        setTimeout(scaleCanvas, 1);
     }; resizeCanvas();
 
     let sinceLastResize;
