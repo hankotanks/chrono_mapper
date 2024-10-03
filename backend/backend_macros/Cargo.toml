@@ -8,8 +8,6 @@ path = "lib.rs"
 proc-macro = true
 
 [dependencies]
-quote = "1.0.37"
 proc-macro2 = "1.0.86"
-wasm-bindgen = { workspace = true }
-wasm-bindgen-futures = { workspace = true }
+quote = "1.0.37"
 wasm-bindgen-macro-support = "0.2.93"

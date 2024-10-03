@@ -4,11 +4,13 @@ mod util;
 mod camera;
 mod map_tex;
 
+use backend::wgpu as wgpu;
+
 use std::mem;
 
 #[derive(Clone, Copy)]
 pub struct Config<'a> {
-    pub surface_format: backend::display::SurfaceFormat,
+    pub surface_format: wgpu::TextureFormat,
     pub font_asset_path: &'a str,
     pub font_family: &'a str,
     pub slices: u32,
@@ -25,7 +27,7 @@ pub struct Config<'a> {
 }
 
 impl backend::AppConfig for Config<'static> {
-    fn surface_format(self) -> backend::display::SurfaceFormat { 
+    fn surface_format(self) -> wgpu::TextureFormat { 
         self.surface_format 
     }
 }
@@ -51,6 +53,8 @@ pub struct App {
 
 impl backend::App for App {
     type Config = Config<'static>;
+    type UpdateError = glyphon::PrepareError;
+    type SubmissionError = glyphon::RenderError;
 
     async fn new(
         config: Self::Config, 
@@ -305,8 +309,8 @@ impl backend::App for App {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         surface: &wgpu::TextureView,
-    ) -> anyhow::Result<()> {       
-        self.submit_globe_pass(encoder, surface)?;
+    ) -> Result<(), Self::SubmissionError> {       
+        self.submit_globe_pass(encoder, surface);
 
         self.submit_feature_pass(encoder, surface)?;
 
@@ -429,8 +433,8 @@ impl backend::App for App {
         &mut self, 
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        bytes: &[u8],
-    ) -> anyhow::Result<()> {
+        request: backend::Request,
+    ) -> Result<(), Self::UpdateError> {
         let Self {
             feature_geometry,
             feature_labels, 
@@ -440,7 +444,18 @@ impl backend::App for App {
             globe_radius, ..
         } = self;
 
-        match self.features.load(device, bytes) {
+        #[allow(unused_variables)]
+        let backend::Request::Asset { 
+            path,
+            bytes, .. 
+        } = request else {
+            #[cfg(feature = "logging")]
+            log::warn!("Failed to fetch asset [{path}]");
+            
+            return Ok(()); 
+        };
+
+        match self.features.load(device, &bytes) {
             Ok(repl) => {
                 mem::replace(feature_geometry, repl).destroy();
 
@@ -453,7 +468,11 @@ impl backend::App for App {
     
                 feature_labels.prepare(device, queue, *screen_resolution)?;
             },
-            Err(_) => { /*  */ },
+            #[allow(unused_variables)]
+            Err(e) => {
+                #[cfg(feature = "logging")] 
+                log::warn!("Failed to parse feature [{path}].\n{e}");
+            },
         }
 
         Ok(())
@@ -465,7 +484,7 @@ impl App {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         surface: &wgpu::TextureView,
-    ) -> anyhow::Result<()> {
+    ) {
         let Self {
             texture_bind_group,
             camera_bind_group,
@@ -513,15 +532,13 @@ impl App {
 
         // draw
         pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
-
-        Ok(())
     }
 
     fn submit_feature_pass(
         &self, 
         encoder: &mut wgpu::CommandEncoder,
         surface: &wgpu::TextureView,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), glyphon::RenderError> {
         let Self {
             camera_bind_group,
             feature_geometry: geom::Geometry {
@@ -613,9 +630,7 @@ impl FeatureManager {
     }
 
     fn load(
-        &mut self, 
-        device: &wgpu::Device, 
-        bytes: &[u8],
+        &mut self, device: &wgpu::Device, bytes: &[u8],
     ) -> anyhow::Result<geom::Geometry<geom::FeatureVertex, geom::FeatureMetadata>> {
         use std::str;
 
@@ -626,12 +641,14 @@ impl FeatureManager {
             features, .. 
         } = geojson::FeatureCollection::try_from(features)?;
 
-        geom::Geometry::build_feature_geometry_earcut(
+        let geometry = geom::Geometry::build_feature_geometry(
             device, 
             features.as_slice(),
             self.slices, 
             self.stacks,
             self.globe_radius, 
-        ).map_err(anyhow::Error::from)
+        )?;
+
+        Ok(geometry)
     }
 }

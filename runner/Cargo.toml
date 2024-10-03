@@ -8,14 +8,8 @@ name = "lib"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
-[dependencies.backend]
-path = "../backend"
-
-[dependencies.backend_macros]
-path = "../backend_macros"
-
 [dependencies.app]
 path = "../app"
 
-[dependencies]
-log = { workspace = true }
+[dependencies.backend]
+path = "../backend"

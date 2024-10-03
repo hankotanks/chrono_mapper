@@ -19,7 +19,7 @@ impl Wrapper {
     }
 }*/
 
-#[backend_macros::init(app::App, app::Config => CONFIG)]
+#[backend::init(app::App, app::Config => CONFIG)]
 pub struct Wrapper;
 
 //backend_macros::init!(app::App, app::Config => CONFIG);
@@ -29,7 +29,7 @@ const fn ext(path: &'static str) -> backend::AssetRef<'static> {
 }
 
 const CONFIG: app::Config = app::Config { 
-    surface_format: backend::display::SurfaceFormat::Rgba8Unorm,
+    surface_format: backend::wgpu::TextureFormat::Rgba8Unorm,
     font_asset_path: "fonts/biolinium.ttf",
     font_family: "Linux Biolinium G",
     slices: 100,

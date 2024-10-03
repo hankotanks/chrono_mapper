@@ -1,7 +1,7 @@
-fn wasm_bindgen(items: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-    match wasm_bindgen_macro_support::expand(proc_macro2::TokenStream::new(), items) {
-        Ok(tokens) => tokens,
-        Err(diagnostic) => quote::quote! { #diagnostic },
+fn wasm_bindgen(items: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    match wasm_bindgen_macro_support::expand(proc_macro2::TokenStream::new(), items.into()) {
+        Ok(tokens) => tokens.into(),
+        Err(diagnostic) => (quote::quote! { #diagnostic }).into(),
     }
 }
 
@@ -68,11 +68,11 @@ fn get_impl(attr: proc_macro::TokenStream, name: proc_macro::Ident) -> proc_macr
         impl #name {
             #[no_mangle]
             #[cfg(target_arch = "wasm32")]
-            pub fn update_canvas(
+            pub fn set_screen_resolution(
                 w: wasm_bindgen::JsValue, 
                 h: wasm_bindgen::JsValue,
             ) -> Result<(), String> { 
-                backend::update_canvas(w, h) 
+                backend::set_screen_resolution(w, h)
             }
 
             #[no_mangle]
@@ -118,14 +118,11 @@ pub fn init_wasm32(
 ) -> proc_macro::TokenStream {
     let name = get_name_from_decl(decl.clone());
 
-    let mut items: proc_macro2::TokenStream = quote::quote! { 
-        use backend::web::wasm_bindgen;
-        use backend::web::wasm_bindgen_futures;
-    };
+    let mut items = proc_macro::TokenStream::new();
 
-    items.extend(wasm_bindgen(decl.into()));
-    items.extend(wasm_bindgen(get_impl(attr, name).into()));
-    items.into()
+    items.extend(wasm_bindgen(decl));
+    items.extend(wasm_bindgen(get_impl(attr, name)));
+    items
 }
 
 #[proc_macro_attribute]
@@ -137,8 +134,8 @@ pub fn init(
     let decl: proc_macro2::TokenStream = decl.into();
 
     quote::quote! {
-        #[cfg_attr(not(target_arch = "wasm32"), backend_macros::init_native(#attr))]
-        #[cfg_attr(target_arch = "wasm32", backend_macros::init_wasm32(#attr))]
+        #[cfg_attr(not(target_arch = "wasm32"), backend::init_native(#attr))]
+        #[cfg_attr(target_arch = "wasm32", backend::init_wasm32(#attr))]
         #decl
     }.into()
 }

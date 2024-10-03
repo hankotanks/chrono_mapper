@@ -1,4 +1,4 @@
-use std::{iter, sync};
+use backend::wgpu as wgpu;
 
 use super::{camera, geom, util};
 
@@ -65,9 +65,11 @@ impl LabelEngine {
         font_family: &'static str,
     ) -> Self {
         let font_system = glyphon::FontSystem::new_with_fonts({
+            use std::sync::Arc;
+
             use glyphon::fontdb::Source;
 
-            iter::once(Source::Binary(sync::Arc::new(font_bytes)))
+            Some(Source::Binary(Arc::new(font_bytes)))
         });
 
         let swash_cache = glyphon::SwashCache::new();
@@ -132,7 +134,7 @@ impl LabelEngine {
                 let b = util::intrs(eye, ray, tr, br, bl, maxima_sq);
             
                 if a < f32::MAX || b < f32::MAX {
-                    if let Some(serde_json::Value::String(name)) = entries[idx].get("NAME") {
+                    if let Some(geojson::JsonValue::String(name)) = entries[idx].get("NAME") {
                         let pos = util::world_to_screen_space(centroid, view, proj);
 
                         let bb_minima = util::world_to_screen_space(tl, view, proj);

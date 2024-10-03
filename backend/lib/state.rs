@@ -1,7 +1,14 @@
-use std::sync;
+use std::{sync, error};
 
 #[cfg(target_arch = "wasm32")]
-use super::web;
+pub(super) struct WebError;
+
+#[cfg(target_arch = "wasm32")]
+impl WebError {
+    pub(super) fn new(op: &'static str) -> anyhow::Error {
+        anyhow::anyhow!("Failed to {op}")
+    }
+}
 
 #[cfg(target_arch = "wasm32")]
 fn surface_config_update(
@@ -73,7 +80,7 @@ impl<'a> State<'a> {
     const SCROLL_THRESHOLD: f32 = 200.;
 
     pub async fn new(
-        event_loop: &winit::event_loop::EventLoop<Vec<u8>>,
+        event_loop: &winit::event_loop::EventLoop<crate::Request>,
         surface_format: wgpu::TextureFormat,
     ) -> anyhow::Result<Self> {
         #[allow(non_snake_case)]
@@ -92,24 +99,24 @@ impl<'a> State<'a> {
                 use winit::platform::web::WindowExtWebSys as _;
 
                 let document = web_sys::window()
-                    .ok_or(web::WebError::new("obtain window"))?
+                    .ok_or(WebError::new("obtain window"))?
                     .document()
-                    .ok_or(web::WebError::new("obtain document"))?;
+                    .ok_or(WebError::new("obtain document"))?;
 
                 let elem: web_sys::Element = window
                     .as_ref()
                     .canvas()
-                    .ok_or(web::WebError::new("create canvas"))?
+                    .ok_or(WebError::new("create canvas"))?
                     .into();
 
                 // Insert the canvas into the body
                 document.body()
-                    .ok_or(web::WebError::new("obtain body"))?
+                    .ok_or(WebError::new("obtain body"))?
                     .append_child(&elem.clone().into())
-                    .map_err(|_| web::WebError::new("append canvas to body"))?;
+                    .map_err(|_| WebError::new("append canvas to body"))?;
 
                 let handle = elem.dyn_into::<web_sys::HtmlCanvasElement>()
-                    .map_err(|_| web::WebError::new("reference render canvas"))?;
+                    .map_err(|_| WebError::new("reference render canvas"))?;
 
                 Ok(wgpu::SurfaceTarget::Canvas(handle))
             }
@@ -204,8 +211,8 @@ impl<'a> State<'a> {
 
     pub fn run(
         &mut self, 
-        event: winit::event::Event<Vec<u8>>,
-        event_target: &winit::event_loop::EventLoopWindowTarget<Vec<u8>>,
+        event: winit::event::Event<crate::Request>,
+        event_target: &winit::event_loop::EventLoopWindowTarget<crate::Request>,
     ) -> anyhow::Result<Vec<crate::AppEvent>> {
         use winit::event::{Event, WindowEvent, KeyEvent, ElementState};
 
@@ -342,8 +349,9 @@ impl<'a> State<'a> {
         Ok(curr)
     }
 
-    pub fn process_encoder<F>(&self, mut op: F) -> anyhow::Result<()> 
-        where F: FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView) -> anyhow::Result<()> {
+    pub fn process_encoder<E, F>(&self, mut op: F) -> anyhow::Result<()> where 
+        E: error::Error + Send + Sync + 'static, 
+        F: FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView) -> Result<(), E> {
 
         let Self {
             device, 
@@ -360,7 +368,8 @@ impl<'a> State<'a> {
             &wgpu::CommandEncoderDescriptor::default()
         });
 
-        op(&mut encoder, &view)?;
+        op(&mut encoder, &view)
+            .map_err(anyhow::Error::from)?;
 
         queue.submit(Some(encoder.finish()));
 

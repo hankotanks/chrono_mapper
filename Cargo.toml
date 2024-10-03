@@ -1,10 +1,3 @@
 [workspace]
-members = ["backend", "app", "runner", "backend_macros"]
+members = ["backend", "app", "runner"]
 resolver = "2"
-
-[workspace.dependencies]
-log = "0.4"
-anyhow = "1.0.81"
-wgpu = "0.19.3"
-wasm-bindgen = "0.2.45"
-wasm-bindgen-futures = "0.4.30"

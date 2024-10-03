@@ -1,6 +1,8 @@
+use backend::wgpu as wgpu;
+
 use std::{hash, io};
 
-type ShaderResult<'a> = Result<wgpu::ShaderModuleDescriptor<'a>, io::Error>;
+type ShaderResult<'a> = io::Result<wgpu::ShaderModuleDescriptor<'a>>;
 
 pub async fn load_shader(path: &str) -> ShaderResult<'_> {
     fn helper<'a>(

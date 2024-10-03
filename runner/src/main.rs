@@ -1,3 +1,3 @@
 fn main() -> Result<(), String> {
-    backend_macros::run!(lib::Wrapper)
+    backend::run!(lib::Wrapper)
 }

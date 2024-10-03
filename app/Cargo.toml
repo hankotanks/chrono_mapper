@@ -7,12 +7,18 @@ edition = "2021"
 path = "src/mod.rs"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+logging = ["backend/logging"]
+
 [dependencies.backend]
 path = "../backend"
 
-[dependencies.serde_json]
-version = "1.0.128"
-default-features = false
+[dependencies]
+anyhow = "1.0.81"
+bytemuck = { version = "1.4", features = ["derive"] }
+ultraviolet = { version = "0.9.2", features = ["bytemuck"] }
+earcutr = "0.4.3"
+glyphon = "0.5.0"
 
 [dependencies.geojson]
 version = "0.24.1"
@@ -21,12 +27,3 @@ version = "0.24.1"
 version = "0.25.0"
 default-features = false
 features = ["tiff"]
-
-[dependencies]
-anyhow = { workspace = true }
-log = { workspace = true }
-bytemuck = { version = "1.4", features = ["derive"] }
-wgpu = { workspace = true }
-ultraviolet = { version = "0.9.2", features = ["bytemuck"] }
-earcutr = "0.4.3"
-glyphon = "0.5.0"

@@ -1,12 +1,14 @@
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
-mod state;
+// re-export macros from backend
+pub use backend_macros::*;
 
-#[cfg(target_arch = "wasm32")]
-pub mod web;
+// re-export log when the implemented asks for it
+#[cfg(feature = "logging")]
+pub mod log {
+    pub use log::*;
+}
 
-#[cfg(not(target_arch = "wasm32"))]
-pub mod native;
 
 // contains wrappers over winit::event
 // prevents `app` from requiring winit as a dependency
@@ -19,11 +21,30 @@ pub mod event {
 }
 
 // same situation as event
-pub mod display {
-    pub use wgpu::TextureFormat as SurfaceFormat;
+pub mod wgpu {
+    pub use wgpu::*;
 }
 
-use std::{cell, collections, future, io, rc};
+#[cfg(target_arch = "wasm32")]
+pub mod web {
+    pub mod wasm_bindgen {
+        // TODO: I don't like re-exporting this
+        pub use wasm_bindgen::*;
+    }
+    
+    pub mod wasm_bindgen_futures {
+        pub use wasm_bindgen_futures::*;
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native {
+    pub mod pollster { pub use pollster::*; }
+}
+
+mod state;
+
+use std::error;
 
 #[derive(Clone, Copy)]
 #[derive(Debug)]
@@ -63,25 +84,28 @@ pub enum AppEvent {
 
 pub trait App {
     type Config: AppConfig;
+    type SubmissionError: error::Error + Send + Sync + 'static;
+    type UpdateError: error::Error + Send + Sync + 'static;
 
     fn new(
         config: Self::Config,
-        device: &wgpu::Device, 
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
-    ) -> impl future::Future<Output = anyhow::Result<Self>> where Self: Sized;
+    ) -> impl std::future::Future<Output = anyhow::Result<Self>> 
+        where Self: Sized;
 
     fn update(
         &mut self, 
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        bytes: &[u8],
-    ) -> anyhow::Result<()>;
+        request: Request,
+    ) -> Result<(), Self::UpdateError>;
 
     fn submit_passes(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         surface: &wgpu::TextureView,
-    ) -> anyhow::Result<()>;
+    ) -> Result<(), Self::SubmissionError>;
 
     fn handle_event(
         &mut self, 
@@ -93,21 +117,23 @@ pub trait App {
 }
 
 pub trait AppConfig: Copy {
-    fn surface_format(self) -> display::SurfaceFormat;
+    fn surface_format(self) -> wgpu::TextureFormat;
 }
 
 struct Package<'a, C: AppConfig, A: App<Config = C>> {
     app: A,
     state: state::State<'a>,
-    event_loop: winit::event_loop::EventLoop<Vec<u8>>,
+    event_loop: winit::event_loop::EventLoop<Request>,
     assets: Assets,
 }
 
 impl<'a, C: AppConfig, A: App<Config = C>> Package<'a, C, A> {
     async fn new(config: C) -> anyhow::Result<Self> {
-        use winit::event_loop::{EventLoop, EventLoopBuilder};
+        let event_loop  = {
+            use winit::event_loop::EventLoopBuilder;
 
-        let event_loop: EventLoop<Vec<u8>> = EventLoopBuilder::with_user_event().build()?;
+            EventLoopBuilder::with_user_event().build()?
+        };
 
         let state = {
             state::State::new(&event_loop, config.surface_format()).await
@@ -124,16 +150,21 @@ impl<'a, C: AppConfig, A: App<Config = C>> Package<'a, C, A> {
 pub async fn start<C, A>(config: C) -> Result<(), String>
     where C: AppConfig, A: App<Config = C> {
 
-    #[cfg(target_arch = "wasm32")] {
-        console_error_panic_hook::set_once();
-        wasm_logger::init(wasm_logger::Config::default());
-    }
-    
-    #[cfg(not(target_arch = "wasm32"))] {
-        simple_logger::SimpleLogger::new()
-            .with_level(log::LevelFilter::Info)
-            .init()
-            .unwrap();
+    use std::rc::Rc;
+    use std::cell::OnceCell;
+
+    #[cfg(feature = "logging")] {
+        #[cfg(target_arch = "wasm32")] {
+            console_error_panic_hook::set_once();
+            wasm_logger::init(wasm_logger::Config::default());
+        }
+        
+        #[cfg(not(target_arch = "wasm32"))] {
+            simple_logger::SimpleLogger::new()
+                .with_level(log::LevelFilter::Info)
+                .init()
+                .unwrap();
+        }
     }
 
     let Package { 
@@ -144,13 +175,14 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
     } = (Package::<'_, C, A>::new(config).await)
         .map_err(|e| e.to_string())?;
 
-    let err = rc::Rc::new(cell::OnceCell::new());
-    let err_inner = rc::Rc::clone(&err);
+    let err = Rc::new(OnceCell::new());
+    let err_inner = Rc::clone(&err);
 
     event_loop.run(move |event, event_target| {
         use winit::event::{Event, WindowEvent};
 
-        if let Some(physical_size) = unsafe { VIEWPORT.take() } {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(physical_size) = unsafe { SCREEN_RESOLUTION.take() } {
             state.resize(physical_size);
 
             let event = AppEvent::Resized(physical_size.into());
@@ -165,7 +197,7 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
                 event: WindowEvent::RedrawRequested,
                 window_id,
             } if window_id == state.window.id() => {
-                if let Err(e) = state.process_encoder(|encoder, view| {
+                if let Err(e) = state.process_encoder::<A::SubmissionError, _>(|encoder, view| {
                     app.submit_passes(encoder, view)
                 }) {
                     let _ = err_inner.get_or_init(|| e);
@@ -173,9 +205,9 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
                     event_target.exit();
                 }
             },
-            Event::UserEvent(bytes) => {
-                if let Err(e) = app.update(&state.device, &state.queue, &bytes) {
-                    let _ = err_inner.get_or_init(|| e);
+            Event::UserEvent(req) => {
+                if let Err(e) = app.update(&state.device, &state.queue, req) {
+                    let _ = err_inner.get_or_init(|| Into::<anyhow::Error>::into(e));
 
                     event_target.exit();
                 }
@@ -199,7 +231,7 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
         }
     }).map_err(|e| e.to_string())?;
 
-    if let Some(mut container) = rc::Rc::into_inner(err) {
+    if let Some(mut container) = Rc::into_inner(err) {
         if let Some(e) = container.take() { Err(e.to_string())?; }
     }
 
@@ -207,41 +239,42 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn update_canvas(
+pub fn set_screen_resolution(
     w: wasm_bindgen::JsValue, h: wasm_bindgen::JsValue,
 ) -> Result<(), String> {
-    unsafe fn update_canvas_inner(
+    unsafe fn inner(
         w: wasm_bindgen::JsValue, h: wasm_bindgen::JsValue,
     ) -> anyhow::Result<winit::dpi::PhysicalSize<u32>> {
         let width: u32 = w.as_string()
-            .ok_or(web::WebError::new("parse canvas width"))?
+            .ok_or(state::WebError::new("parse canvas width"))?
             .parse()?;
     
         let height: u32 = h.as_string()
-            .ok_or(web::WebError::new("parse canvas height"))?
+            .ok_or(state::WebError::new("parse canvas height"))?
             .parse()?;
 
         Ok(winit::dpi::PhysicalSize { width, height })
     }
 
     unsafe {
-        let size = update_canvas_inner(w, h)
+        let size = inner(w, h)
             .map_err(|e| e.to_string())?;
 
-        let _ = VIEWPORT.insert(size);
+        let _ = SCREEN_RESOLUTION.insert(size);
     }
 
     Ok(())
 }
 
-static mut VIEWPORT: Option<winit::dpi::PhysicalSize<u32>> = None;
+#[cfg(target_arch = "wasm32")]
+static mut SCREEN_RESOLUTION: Option<winit::dpi::PhysicalSize<u32>> = None;
 
 #[derive(Clone, Copy)]
 pub enum AssetLocator { 
     // relative to the project root
     // on web, this is base URL
     Local,
- }
+}
 
 #[derive(Clone, Copy)]
 pub struct AssetRef<'a> {
@@ -249,28 +282,33 @@ pub struct AssetRef<'a> {
     pub locator: AssetLocator,
 }
 
-pub struct Assets(winit::event_loop::EventLoopProxy<Vec<u8>>); 
+pub enum Request {
+    Asset { path: String, bytes: Vec<u8> }, 
+    Error,
+}
+
+pub struct Assets(winit::event_loop::EventLoopProxy<Request>);
 
 impl Assets {
     #[cfg(not(target_arch = "wasm32"))]
     const WORKSPACE_ROOT: &'static str = env!("WORKSPACE_ROOT");
 
-    pub fn retrieve(path: &str) -> io::Result<&[u8]> {
-        use once_cell::sync::Lazy;
+    pub fn retrieve(path: &str) -> std::io::Result<&[u8]> {
+        use std::sync::OnceLock;
 
-        static STATIC: Lazy<collections::HashMap<&'static str, &'static [u8]>> = Lazy::new(|| {
-            let mut assets = collections::HashMap::new();
+        use std::collections::HashMap;
+
+        static STATIC: OnceLock<HashMap<&'static str, &'static [u8]>> = OnceLock::new();
+
+        STATIC.get_or_init(|| {
+            let mut assets = HashMap::new();
             for (tag, asset) in generate().into_iter() {
                 assets.insert(tag, asset.data);
             }
         
             assets
-        });
-
-        STATIC
-            .get(path)
-            .copied()
-            .ok_or(io::Error::from(io::ErrorKind::NotFound))
+        }).get(path).copied().ok_or(std::io::Error::from(std::io::ErrorKind::NotFound))
+            
     }
 
     pub fn request(&self, aref: AssetRef<'_>) {
@@ -281,14 +319,69 @@ impl Assets {
         match locator {
             AssetLocator::Local => {
                 #[cfg(target_arch = "wasm32")] {
-                    match web::url() {
+                    fn url() -> anyhow::Result<String> {
+                        web_sys::window()
+                            .ok_or(state::WebError::new("obtain window"))?
+                            .location()
+                            .href()
+                            .map_err(|_| state::WebError::new("query website's base url"))
+                    }
+
+                    async fn req_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
+                        use wasm_bindgen::JsCast as _;
+                    
+                        let opts = web_sys::RequestInit::new();
+                            opts.set_method("GET");
+                            opts.set_mode(web_sys::RequestMode::Cors);
+                    
+                        let request = web_sys::Request::new_with_str_and_init(&url, &opts)
+                            .map_err(|_| state::WebError::new("initialize request"))?;
+                    
+                        let window = web_sys::window()
+                            .ok_or(state::WebError::new("obtain window"))?;
+                    
+                        let resp = window.fetch_with_request(&request);
+                        let resp = wasm_bindgen_futures::JsFuture::from(resp)
+                            .await
+                            .map_err(|_| state::WebError::new("fetch data"))?
+                            .dyn_into::<web_sys::Response>()
+                            .map_err(|_| state::WebError::new("cast response"))?
+                            .text()
+                            .map_err(|_| state::WebError::new("get response body"))?;
+                    
+                        let bytes = wasm_bindgen_futures::JsFuture::from(resp)
+                            .await
+                            .map_err(|_| state::WebError::new("get response body"))?
+                            .as_string()
+                            .unwrap()
+                            .into_bytes();
+
+                        Ok(bytes)
+                    }
+
+                    async fn req(
+                        proxy: winit::event_loop::EventLoopProxy<Vec<u8>>,
+                        url: &str,
+                    ) -> anyhow::Result<()> {
+                        let retr = match req_bytes(url) {
+                            Ok(bytes) => Request::Asset { path: url.to_string(), bytes },
+                            Err(_) => Request::Error,
+                        };
+
+                        proxy.send_event(retr)
+                            .map_err(|_| state::WebError::new("serve data to event loop"))
+                    }
+
+                    match url() {
                         Ok(mut url) => {
                             url.push_str(path);
 
                             let proxy = proxy.clone();
                             wasm_bindgen_futures::spawn_local(async move {
-                                // TODO: Report failure to fetch
-                                web::req(proxy, &url).await.unwrap()
+                                // It's okay to discard this error
+                                // Because it can only occur if the EventLoop has been closed
+                                // Which causes the process to exit immediately
+                                let _ = req(proxy, &url).await;
                             });
                         },
                         Err(_) => { /*  */ },
@@ -296,12 +389,15 @@ impl Assets {
                 }
 
                 #[cfg(not(target_arch = "wasm32"))] {
-                    let path = std::path::Path::new(Self::WORKSPACE_ROOT)
+                    let path_full = std::path::Path::new(Self::WORKSPACE_ROOT)
                         .join(path);
-                    
-                    if let io::Result::Ok(bytes) = std::fs::read(path) {
-                        let _ = proxy.send_event(bytes);
-                    }
+
+                    let retr = match std::fs::read(path_full) {
+                        Ok(bytes) => Request::Asset { path: path.to_string(), bytes },
+                        Err(_) => Request::Error,
+                    };
+
+                    let _ = proxy.send_event(retr);
                 }
             },
         }
