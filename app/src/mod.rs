@@ -433,7 +433,9 @@ impl backend::App for App {
         &mut self, 
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        request: backend::Request,
+        bytes: &[u8],
+        #[allow(unused_variables)]
+        asset_path: &str,
     ) -> Result<(), Self::UpdateError> {
         let Self {
             feature_geometry,
@@ -444,18 +446,7 @@ impl backend::App for App {
             globe_radius, ..
         } = self;
 
-        #[allow(unused_variables)]
-        let backend::Request::Asset { 
-            path,
-            bytes, .. 
-        } = request else {
-            #[cfg(feature = "logging")]
-            log::warn!("Failed to fetch asset [{path}]");
-            
-            return Ok(()); 
-        };
-
-        match self.features.load(device, &bytes) {
+        match self.features.load(device, bytes) {
             Ok(repl) => {
                 mem::replace(feature_geometry, repl).destroy();
 
@@ -471,7 +462,7 @@ impl backend::App for App {
             #[allow(unused_variables)]
             Err(e) => {
                 #[cfg(feature = "logging")] 
-                log::warn!("Failed to parse feature [{path}].\n{e}");
+                backend::log::debug!("Failed to parse feature [{asset_path}].\n{e}");
             },
         }
 
@@ -623,10 +614,13 @@ impl From<Config<'static>> for FeatureManager {
 
 impl FeatureManager {
     fn request(&mut self, assets: &backend::Assets) {
-        assets.request(self.features[self.idx]);
-
-        self.idx += 1;
-        self.idx %= self.features.len();
+        if assets.request(self.features[self.idx]).is_ok() {
+            self.idx += 1;
+            self.idx %= self.features.len();
+        } else {
+            #[cfg(feature = "logging")]
+            backend::log::debug!("load interrupted");
+        }
     }
 
     fn load(

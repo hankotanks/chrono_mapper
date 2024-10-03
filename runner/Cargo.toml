@@ -8,6 +8,9 @@ name = "lib"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+logging = ["app/logging"]
+
 [dependencies.app]
 path = "../app"
 

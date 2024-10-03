@@ -1,5 +1,5 @@
 cd runner
-wasm-pack build --target web --no-pack --out-name core --out-dir ../pkg
+wasm-pack build --target web --no-pack --out-name core --out-dir ../pkg --features="logging"
 cd ..
 cp -r static/* pkg
 cp -r js/* pkg
