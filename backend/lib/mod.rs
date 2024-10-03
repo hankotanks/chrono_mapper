@@ -100,7 +100,8 @@ pub trait App {
         &mut self, 
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        request: Request,
+        bytes: &[u8],
+        asset_path: &str,
     ) -> Result<(), Self::UpdateError>;
 
     fn submit_passes(
@@ -126,7 +127,6 @@ struct Package<'a, C: AppConfig, A: App<Config = C>> {
     app: A,
     state: state::State<'a>,
     event_loop: winit::event_loop::EventLoop<Request>,
-    assets: Assets,
 }
 
 impl<'a, C: AppConfig, A: App<Config = C>> Package<'a, C, A> {
@@ -143,9 +143,7 @@ impl<'a, C: AppConfig, A: App<Config = C>> Package<'a, C, A> {
 
         let app = (A::new(config, &state.device, &state.queue).await)?;
 
-        let assets = Assets(event_loop.create_proxy());
-
-        Ok(Self { app, state, event_loop, assets })
+        Ok(Self { app, state, event_loop })
     }
 }
 
@@ -173,9 +171,12 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
         mut app, 
         mut state, 
         event_loop,
-        assets,
     } = (Package::<'_, C, A>::new(config).await)
         .map_err(|e| e.to_string())?;
+
+    let proxy = event_loop.create_proxy();
+
+    let mut loading = false;
 
     let err = Rc::new(OnceCell::new());
     let err_inner = Rc::clone(&err);
@@ -189,6 +190,7 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
 
             let event = AppEvent::Resized(physical_size.into());
 
+            let assets = Assets { proxy: proxy.clone(), loading };
             if app.handle_event(&state.device, &state.queue, &assets, event) {
                 state.window.request_redraw();
             }
@@ -208,10 +210,26 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
                 }
             },
             Event::UserEvent(req) => {
-                if let Err(e) = app.update(&state.device, &state.queue, req) {
-                    let _ = err_inner.get_or_init(|| Into::<anyhow::Error>::into(e));
+                match req {
+                    Request::Loading => {
+                        loading = true;
 
-                    event_target.exit();
+                        #[cfg(feature = "logging")]
+                        log::debug!("started loading an asset");
+                    },
+                    Request::Fulfilled { bytes, path } => {
+                        loading = false;
+
+                        #[cfg(feature = "logging")]
+                        log::debug!("finished loading asset [{}]", &path);
+
+                        if let Err(e) = app.update(&state.device, &state.queue, &bytes, &path) {
+                            let _ = err_inner.get_or_init(|| Into::<anyhow::Error>::into(e));
+        
+                            event_target.exit();
+                        }
+                    },
+                    Request::Failed => loading = false,
                 }
 
                 state.window.request_redraw();
@@ -219,6 +237,7 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
             event => match state.run(event, event_target) {
                 Ok(events) => {
                     for event in events {
+                        let assets = Assets { proxy: proxy.clone(), loading };
                         if app.handle_event(&state.device, &state.queue, &assets, event) {
                             state.window.request_redraw();
                         }
@@ -259,8 +278,7 @@ pub fn set_screen_resolution(
     }
 
     unsafe {
-        let size = inner(w, h)
-            .map_err(|e| e.to_string())?;
+        let size = inner(w, h).map_err(|e| e.to_string())?;
 
         let _ = SCREEN_RESOLUTION.insert(size);
     }
@@ -285,19 +303,23 @@ pub struct AssetRef<'a> {
 }
 
 pub enum Request {
-    Asset { path: String, bytes: Vec<u8> }, 
-    Error,
+    Loading,
+    Fulfilled { path: String, bytes: Vec<u8> }, 
+    Failed,
 }
 
-pub struct Assets(winit::event_loop::EventLoopProxy<Request>);
+pub struct Assets {
+    proxy: winit::event_loop::EventLoopProxy<Request>,
+    loading: bool,
+}
 
 impl Assets {
     #[cfg(not(target_arch = "wasm32"))]
     const WORKSPACE_ROOT: &'static str = env!("WORKSPACE_ROOT");
 
     pub fn retrieve(path: &str) -> std::io::Result<&[u8]> {
+        use std::io::{Error, ErrorKind};
         use std::sync::OnceLock;
-
         use std::collections::HashMap;
 
         static STATIC: OnceLock<HashMap<&'static str, &'static [u8]>> = OnceLock::new();
@@ -306,15 +328,18 @@ impl Assets {
             let mut assets = HashMap::new();
             for (tag, asset) in generate().into_iter() {
                 assets.insert(tag, asset.data);
-            }
-        
-            assets
-        }).get(path).copied().ok_or(std::io::Error::from(std::io::ErrorKind::NotFound))
-            
+            }; assets
+        }).get(path).copied().ok_or(Error::from(ErrorKind::NotFound))
     }
 
-    pub fn request(&self, aref: AssetRef<'_>) {
-        let Self(proxy) = self;
+    pub fn request(&self, aref: AssetRef<'_>) -> std::io::Result<()> {
+        let Self { proxy, loading } = self;
+
+        if *loading {
+            use std::io::{Error, ErrorKind};
+            
+            return Err(Error::from(ErrorKind::Interrupted));
+        }
 
         let AssetRef { path, locator } = aref;
 
@@ -365,9 +390,11 @@ impl Assets {
                         proxy: winit::event_loop::EventLoopProxy<Request>,
                         url: &str,
                     ) -> anyhow::Result<()> {
+                        let path = String::from(url);
+
                         let retr = match req_bytes(url).await {
-                            Ok(bytes) => Request::Asset { path: url.to_string(), bytes },
-                            Err(_) => Request::Error,
+                            Ok(bytes) => Request::Fulfilled { path, bytes },
+                            Err(_) => Request::Failed,
                         };
 
                         proxy.send_event(retr)
@@ -378,12 +405,22 @@ impl Assets {
                         Ok(mut url) => {
                             url.push_str(path);
 
+                            #[allow(unused_variables)]
+                            let result = proxy.send_event(Request::Loading);
+
+                            #[cfg(feature = "logging")]
+                            if let Err(e) = result { log::debug!("{e}"); }
+
                             let proxy = proxy.clone();
                             wasm_bindgen_futures::spawn_local(async move {
                                 // It's okay to discard this error
                                 // Because it can only occur if the EventLoop has been closed
                                 // Which causes the process to exit immediately
-                                let _ = req(proxy, &url).await;
+                                #[allow(unused_variables)]
+                                let result = req(proxy, &url).await;
+
+                                #[cfg(feature = "logging")]
+                                if let Err(e) = result { log::debug!("{e}"); }
                             });
                         },
                         Err(_) => { /*  */ },
@@ -395,13 +432,19 @@ impl Assets {
                         .join(path);
 
                     let retr = match std::fs::read(path_full) {
-                        Ok(bytes) => Request::Asset { path: path.to_string(), bytes },
-                        Err(_) => Request::Error,
+                        Ok(bytes) => Request::Fulfilled { path: path.to_string(), bytes },
+                        Err(_) => Request::Failed,
                     };
 
-                    let _ = proxy.send_event(retr);
+                    #[allow(unused_variables)]
+                    let result = proxy.send_event(retr);
+
+                    #[cfg(feature = "logging")]
+                    if let Err(e) = result { log::debug!("{e}"); }
                 }
             },
         }
+
+        Ok(())
     }
 }
