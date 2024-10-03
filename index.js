@@ -30,14 +30,14 @@ const exec = async () => {
             const canvas = document.getElementsByTagName("canvas").item(0);
 
             if(canvas != undefined) {
-                let x = window.innerWidth / canvas.width;
-                let y = window.innerHeight / canvas.height;
+                let x = canvas.width / window.innerWidth;
+                let y = canvas.height / window.innerHeight;
 
-                if(x < y) {
+                if(x > y) {
                     canvas.style.width = `${window.innerWidth}px`;
-                    canvas.style.height = `${canvas.height * x}px`;
+                    canvas.style.height = `${canvas.height / x}px`;
                 } else {
-                    canvas.style.width = `${canvas.width * y}px`;
+                    canvas.style.width = `${canvas.width / y}px`;
                     canvas.style.height = `${window.innerHeight}px`;
                 }
             }
