@@ -1,5 +1,5 @@
 cd app
-wasm-pack build --target web --no-pack --out-name core --out-dir ../pkg --features="gh-pages"
+wasm-pack build --target web --no-pack --out-name core --out-dir ../pkg
 cd ..
 rm "./pkg/.gitignore"
 cp -r static/* pkg
