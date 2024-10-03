@@ -118,7 +118,10 @@ pub fn init_wasm32(
 ) -> proc_macro::TokenStream {
     let name = get_name_from_decl(decl.clone());
 
-    let mut items = proc_macro::TokenStream::new();
+    let mut items: proc_macro::TokenStream = quote::quote! {
+        use backend::web::wasm_bindgen;
+        use backend::web::wasm_bindgen_futures;
+    }.into();
 
     items.extend(wasm_bindgen(decl));
     items.extend(wasm_bindgen(get_impl(attr, name)));

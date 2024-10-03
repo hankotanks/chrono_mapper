@@ -39,7 +39,9 @@ pub mod web {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native {
-    pub mod pollster { pub use pollster::*; }
+    pub mod pollster { 
+        pub use pollster::block_on; 
+    }
 }
 
 mod state;
@@ -360,10 +362,10 @@ impl Assets {
                     }
 
                     async fn req(
-                        proxy: winit::event_loop::EventLoopProxy<Vec<u8>>,
+                        proxy: winit::event_loop::EventLoopProxy<Request>,
                         url: &str,
                     ) -> anyhow::Result<()> {
-                        let retr = match req_bytes(url) {
+                        let retr = match req_bytes(url).await {
                             Ok(bytes) => Request::Asset { path: url.to_string(), bytes },
                             Err(_) => Request::Error,
                         };
