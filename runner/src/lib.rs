@@ -1,28 +1,5 @@
-/*
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen::prelude::wasm_bindgen)]
-pub struct Wrapper;
-
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen::prelude::wasm_bindgen)]
-impl Wrapper {
-    #[no_mangle]
-    #[cfg(target_arch = "wasm32")]
-    pub fn update_canvas(
-        w: wasm_bindgen::JsValue, 
-        h: wasm_bindgen::JsValue,
-    ) -> Result<(), String> { 
-        backend::update_canvas(w, h) 
-    }
-
-    #[no_mangle]
-    pub async fn run() -> Result<(), String> {
-        backend::start::<app::Config, app::App>(CONFIG).await
-    }
-}*/
-
 #[backend::init(app::App, app::Config => CONFIG)]
 pub struct Wrapper;
-
-//backend_macros::init!(app::App, app::Config => CONFIG);
 
 const fn ext(path: &'static str) -> backend::AssetRef<'static> {
     backend::AssetRef { path, locator: backend::AssetLocator::Local }
