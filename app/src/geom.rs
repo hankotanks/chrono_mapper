@@ -1,3 +1,5 @@
+use backend::wgpu as wgpu;
+
 use super::util;
 
 pub struct Geometry<T: bytemuck::Pod + bytemuck::Zeroable, M: Default> {
@@ -99,7 +101,7 @@ pub struct BoundingBox {
 
 #[derive(Default)]
 pub struct FeatureMetadata {
-    pub entries: Vec<Metadata>,
+    pub entries: Vec<geojson::JsonObject>,
     pub colors: Vec<[u8; 3]>,
     pub bounding_boxes: Vec<(BoundingBox, usize)>,
 }
@@ -195,20 +197,20 @@ impl Geometry<GlobeVertex, ()> {
 }
 
 impl Geometry<FeatureVertex, FeatureMetadata> {
-    pub fn build_feature_geometry_earcut(
+    pub fn build_feature_geometry(
         device: &wgpu::Device,
         features: &[geojson::Feature],
         slices: u32,
         stacks: u32,
         globe_radius: f32,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, earcutr::Error> {
         use wgpu::util::DeviceExt as _;
 
         fn validation(feature: &geojson::Feature) -> Option<TempFeature<'_>> {
             TempFeature::validate(feature, |metadata| {
                 match metadata.get("NAME") {
-                    Some(serde_json::Value::Null) => false,
-                    Some(serde_json::Value::String(_)) => true, 
+                    Some(geojson::JsonValue::Null) => false,
+                    Some(geojson::JsonValue::String(_)) => true, 
                     _ => false,
                 }
             })
@@ -261,17 +263,15 @@ impl Geometry<FeatureVertex, FeatureMetadata> {
     }
 }
 
-type Metadata = serde_json::Map<String, serde_json::Value>;
-
 struct TempFeature<'a> {
     geometry: &'a geojson::Geometry,
-    metadata: &'a Metadata,
+    metadata: &'a geojson::JsonObject,
 }
 
 impl<'a> TempFeature<'a> {
     fn validate(
         feature: &'a geojson::Feature,
-        predicate: impl Fn(&Metadata) -> bool,
+        predicate: impl Fn(&geojson::JsonObject) -> bool,
     ) -> Option<Self> {
         let geojson::Feature { geometry, properties, .. } = feature;
         

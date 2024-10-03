@@ -1,72 +1,55 @@
-use std::{collections, hash, io};
+use backend::wgpu as wgpu;
 
-pub fn load_shader<'a>(
-    assets: &collections::HashMap<&'a str, &'a [u8]>,
-    asset_path: &str,
-) -> Result<wgpu::ShaderModuleDescriptor<'a>, io::Error> {
-    fn load_shader_inner<'a>(
-        assets: &collections::HashMap<&'a str, &'a [u8]>,
-        asset_path: &str, 
+use std::{hash, io};
+
+type ShaderResult<'a> = io::Result<wgpu::ShaderModuleDescriptor<'a>>;
+
+pub async fn load_shader(path: &str) -> ShaderResult<'_> {
+    fn helper<'a>(
+        lines: impl Iterator<Item = &'a str>,
     ) -> Result<String, io::Error> {
-        if let Some(source) = assets.get(asset_path) {
-            let source = String::from_utf8(source.to_vec())
-                .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-
-            let mut source_full = String::new();
-            for includes in source.lines() {
-                if includes.contains("include") {
-                    if let Some(module) = includes.split_whitespace().nth(1) {
-                        let module = load_shader_inner(assets, module).unwrap();
-    
-                        source_full.push_str(&module);
-                    }
-                } else {
-                    break;
+        let mut full = String::new();
+        
+        for line in lines {
+            if line.contains("include") {
+                if let Some(path) = line.split_whitespace().nth(1) {
+                    full.push_str(&(load_shader_inner(path))?);
                 }
-            }
+            } else { break; }
+        }
 
-            source_full.push_str(&source);
+        Ok(full)
+    }
 
-            Ok(source_full)
-        } else {
-            Err(io::Error::from(io::ErrorKind::NotFound))
+    fn load_shader_inner(path: &str) -> Result<String, io::Error> {
+        let source = backend::Assets::retrieve(path)?.to_vec();
+
+        match String::from_utf8(source) {
+            Ok(source) => {
+                let mut full = helper(source.lines())?;
+
+                full.push_str(&source);
+
+                Ok(full)
+            },
+            Err(_) => Err(io::Error::from(io::ErrorKind::InvalidData)),
         }
     }
 
 	Ok(wgpu::ShaderModuleDescriptor {
 		label: None,
-		source: wgpu::ShaderSource::Wgsl({
-            load_shader_inner(assets, asset_path)?.into()
-        }),
+		source: wgpu::ShaderSource::Wgsl(load_shader_inner(path)?.into()),
 	})
-}
-
-#[allow(dead_code)]
-pub fn load_features_from_geojson<'a>(
-    assets: &collections::HashMap<&'a str, &'a [u8]>,
-    path: &'a str,
-) -> anyhow::Result<Vec<geojson::Feature>> {
-    use std::str;
-    
-    let data = assets
-        .get(path)
-        .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
-
-    let features = str::from_utf8(data)?.parse::<geojson::GeoJson>()?;
-
-    let collection = geojson::FeatureCollection::try_from(features)?.features;
-
-    Ok(collection)
 }
 
 pub fn cursor_to_world_ray(
     view: [[f32; 4]; 4], 
     proj: [[f32; 4]; 4], 
-    cursor: winit::dpi::PhysicalPosition<f32>,
+    cursor: backend::Position,
 ) -> [f32; 3] {
     use ultraviolet::{Vec2, Vec4, Mat4};
 
-    let winit::dpi::PhysicalPosition { x, y } = cursor;
+    let backend::Position { x, y } = cursor;
 
     let Vec2 { 
         x, y,

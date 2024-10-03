@@ -4,10 +4,12 @@ mod util;
 mod camera;
 mod map_tex;
 
-use std::{mem, collections, io};
+use backend::wgpu as wgpu;
+
+use std::mem;
 
 #[derive(Clone, Copy)]
-pub struct GlobeConfig<'a> {
+pub struct Config<'a> {
     pub surface_format: wgpu::TextureFormat,
     pub font_asset_path: &'a str,
     pub font_family: &'a str,
@@ -16,22 +18,21 @@ pub struct GlobeConfig<'a> {
     pub globe_radius: f32,
     pub globe_shader_asset_path: &'a str,
     pub basemap: &'a str,
-    pub basemap_padding: winit::dpi::PhysicalSize<u32>,
-    pub features: &'a [&'a str],
+    pub basemap_padding: backend::Size,
+    pub features: &'a [backend::AssetRef<'a>],
     pub features_shader_asset_path: &'a str,
     // the number of rays to distribute across the screen's width
     // vertical ray density is proportional to the window's aspect ratio
     pub feature_label_ray_density: u32,
 }
 
-impl backend::HarnessConfig for GlobeConfig<'static> {
+impl backend::AppConfig for Config<'static> {
     fn surface_format(self) -> wgpu::TextureFormat { 
         self.surface_format 
     }
 }
 
-pub struct Globe {
-    assets: collections::HashMap<&'static str, &'static [u8]>,
+pub struct App {
     basemap_data: Option<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>>,
     texture: wgpu::Texture,
     texture_bind_group: wgpu::BindGroup,
@@ -47,24 +48,22 @@ pub struct Globe {
     feature_labels: feature_labels::LabelEngine,
     screen_ray_density: u32,
     screen_rays: Vec<[f32; 3]>,
-    screen_resolution: winit::dpi::PhysicalSize<u32>,
+    screen_resolution: backend::Size,
 }
 
-impl backend::Harness for Globe {
-    type Config = GlobeConfig<'static>;
+impl backend::App for App {
+    type Config = Config<'static>;
+    type UpdateError = glyphon::PrepareError;
+    type SubmissionError = glyphon::RenderError;
 
     async fn new(
         config: Self::Config, 
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        #[allow(unused_variables)]
-        assets: collections::HashMap<&'static str, &'static [u8]>,
+        device: &wgpu::Device, queue: &wgpu::Queue,
     ) -> anyhow::Result<Self> where Self: Sized {
-        let bytes = assets
-            .get(config.basemap)
-            .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
-
-        let basemap = map_tex::Basemap::from_bytes(bytes, config.basemap_padding)?;
+        let basemap = map_tex::Basemap::from_bytes(
+            backend::Assets::retrieve(config.basemap)?, 
+            config.basemap_padding,
+        )?;
         
         let texture = device.create_texture(&{
             wgpu::TextureDescriptor {
@@ -185,7 +184,7 @@ impl backend::Harness for Globe {
         });
 
         let globe_pipeline_shader = device.create_shader_module({
-            util::load_shader(&assets, config.globe_shader_asset_path)?
+            (util::load_shader(config.globe_shader_asset_path).await)?
         });
 
         let globe_pipeline = device.create_render_pipeline(&{
@@ -236,7 +235,7 @@ impl backend::Harness for Globe {
         });
 
         let feature_pipeline_shader = device.create_shader_module({
-            util::load_shader(&assets, config.features_shader_asset_path)?
+            (util::load_shader(config.features_shader_asset_path).await)?
         });
 
         let feature_pipeline = device.create_render_pipeline(&{
@@ -282,12 +281,11 @@ impl backend::Harness for Globe {
             device,
             queue,
             config.surface_format,
-            assets[config.font_asset_path].to_vec(),
+            backend::Assets::retrieve(config.font_asset_path)?.to_vec(),
             config.font_family,
         );
 
         Ok(Self {
-            assets,
             basemap_data: Some(basemap.buffer),
             texture,
             texture_bind_group,
@@ -303,13 +301,30 @@ impl backend::Harness for Globe {
             feature_labels,
             screen_ray_density: config.feature_label_ray_density,
             screen_rays: Vec::with_capacity(0),
-            screen_resolution: winit::dpi::PhysicalSize::default(),
+            screen_resolution: backend::Size::default(),
         })
     }
 
-    fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> anyhow::Result<()> {
+    fn submit_passes(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        surface: &wgpu::TextureView,
+    ) -> Result<(), Self::SubmissionError> {       
+        self.submit_globe_pass(encoder, surface);
+
+        self.submit_feature_pass(encoder, surface)?;
+
+        Ok(())
+    }
+    
+    fn handle_event(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        assets: &backend::Assets,
+        event: backend::AppEvent,
+    ) -> bool {
         let Self {
-            assets,
             basemap_data,
             texture,
             camera,
@@ -323,9 +338,24 @@ impl backend::Harness for Globe {
             screen_resolution, ..
         } = self;
 
+        match event {
+            backend::AppEvent::Key { 
+                code: backend::event::KeyCode::Space, 
+                state: backend::event::ElementState::Released, 
+            } => features.request(assets),
+            backend::AppEvent::Resized(size) => {
+                *screen_resolution = size;
+            },
+            event => {
+                if !camera.handle_event(event) {
+                    return false;
+                }
+            }
+        }
+
         let camera_uniform = camera
             .update()
-            .build_camera_uniform();
+            .build_camera_uniform(*screen_resolution);
 
         // generate rays if its okay to prepare labels
         match (camera.movement_in_progress(), screen_rays.len()) {
@@ -335,22 +365,23 @@ impl backend::Harness for Globe {
                     view,
                     proj, ..
                 } = camera_uniform;
-    
-                let winit::dpi::PhysicalSize { width, height } = *screen_resolution;
-    
+
+                let backend::Size { width, height } = *screen_resolution;
+
                 let gap = (width as f32 / *screen_ray_density as f32).ceil();
-    
+
                 for y in 0..(height as f32 / gap).ceil() as u32 {
                     let y = y as f32 / 5. - 1.;
                     for x in 0..*screen_ray_density {
                         let x = x as f32 / 5. - 1.;
-    
-                        let cursor = winit::dpi::PhysicalPosition { x, y };
-    
+
+                        let cursor = backend::Position { x, y };
+
                         screen_rays.push(util::cursor_to_world_ray(view, proj, cursor));
                     }
                 }
-            }, _ => { /*  */ },
+            },
+            _ => { /*  */ },
         }
 
         if !camera.movement_in_progress() {
@@ -361,7 +392,11 @@ impl backend::Harness for Globe {
                 *globe_radius,
             );
 
-            feature_labels.prepare(device, queue, *screen_resolution)?;
+            // TODO: Put more thought into how to handle this / if it needs to be
+            if feature_labels.prepare(device, queue, *screen_resolution).is_err() {
+                // clear screen rays to prevent rendering broken labels
+                screen_rays.clear();
+            }
         }
 
         queue.write_buffer(
@@ -391,70 +426,65 @@ impl backend::Harness for Globe {
             );
         }
 
-        if let Some(repl) = features.load_if_ready(device, assets) {
-            mem::replace(feature_geometry, repl).destroy();
+        true
+    }
+    
+    fn update(
+        &mut self, 
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        request: backend::Request,
+    ) -> Result<(), Self::UpdateError> {
+        let Self {
+            feature_geometry,
+            feature_labels, 
+            screen_rays,
+            screen_resolution,
+            camera,
+            globe_radius, ..
+        } = self;
 
-            feature_labels.queue_labels_for_display(
-                &feature_geometry.metadata,
-                screen_rays,
-                camera_uniform,
-                *globe_radius,
-            );
+        #[allow(unused_variables)]
+        let backend::Request::Asset { 
+            path,
+            bytes, .. 
+        } = request else {
+            #[cfg(feature = "logging")]
+            log::warn!("Failed to fetch asset [{path}]");
+            
+            return Ok(()); 
+        };
 
-            feature_labels.prepare(device, queue, *screen_resolution)?;
+        match self.features.load(device, &bytes) {
+            Ok(repl) => {
+                mem::replace(feature_geometry, repl).destroy();
+
+                feature_labels.queue_labels_for_display(
+                    &feature_geometry.metadata,
+                    screen_rays,
+                    camera.build_camera_uniform(*screen_resolution),
+                    *globe_radius,
+                );
+    
+                feature_labels.prepare(device, queue, *screen_resolution)?;
+            },
+            #[allow(unused_variables)]
+            Err(e) => {
+                #[cfg(feature = "logging")] 
+                log::warn!("Failed to parse feature [{path}].\n{e}");
+            },
         }
 
         Ok(())
     }
-    
-    fn submit_passes(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        surface: &wgpu::TextureView,
-    ) -> anyhow::Result<()> {       
-        self.submit_globe_pass(encoder, surface)?;
-
-        self.submit_feature_pass(encoder, surface)?;
-
-        Ok(())
-    }
-    
-    fn handle_event(
-        &mut self,
-        event: winit::event::DeviceEvent,
-    ) -> bool {
-        use winit::keyboard::{PhysicalKey, KeyCode};
-
-        match event {
-            winit::event::DeviceEvent::Key(winit::event::RawKeyEvent { 
-                physical_key: PhysicalKey::Code(KeyCode::Space), 
-                state: winit::event::ElementState::Released,
-            }) => {
-                self.features.queue();
-
-                true 
-            },
-            _ => self.camera.handle_event(event),
-        }  
-    }
-    
-    fn handle_resize(
-        &mut self,
-        size: winit::dpi::PhysicalSize<u32>,
-        scale: f32, 
-    ) {
-        self.camera.handle_resize(size, scale);
-
-        self.screen_resolution = size;
-    }
 }
 
-impl Globe {
+impl App {
     fn submit_globe_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         surface: &wgpu::TextureView,
-    ) -> anyhow::Result<()> {
+    ) {
         let Self {
             texture_bind_group,
             camera_bind_group,
@@ -502,15 +532,13 @@ impl Globe {
 
         // draw
         pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
-
-        Ok(())
     }
 
     fn submit_feature_pass(
         &self, 
         encoder: &mut wgpu::CommandEncoder,
         surface: &wgpu::TextureView,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), glyphon::RenderError> {
         let Self {
             camera_bind_group,
             feature_geometry: geom::Geometry {
@@ -568,16 +596,15 @@ impl Globe {
 
 struct FeatureManager {
     idx: usize,
-    features: &'static [&'static str],
-    queued: bool,
+    features: &'static [backend::AssetRef<'static>],
     slices: u32,
     stacks: u32,
     globe_radius: f32,
 }
 
-impl From<GlobeConfig<'static>> for FeatureManager {
-    fn from(value: GlobeConfig<'static>) -> Self {
-        let GlobeConfig {
+impl From<Config<'static>> for FeatureManager {
+    fn from(value: Config<'static>) -> Self {
+        let Config {
             slices,
             stacks,
             globe_radius,
@@ -587,7 +614,6 @@ impl From<GlobeConfig<'static>> for FeatureManager {
         Self {
             idx: 0,
             features,
-            queued: true,
             slices,
             stacks,
             globe_radius,
@@ -596,39 +622,33 @@ impl From<GlobeConfig<'static>> for FeatureManager {
 }
 
 impl FeatureManager {
-    fn queue(&mut self) { 
-        self.queued = true; 
-    }
-
-    fn load_if_ready(
-        &mut self,
-        device: &wgpu::Device,
-        assets: &collections::HashMap<&str, &[u8]>,
-    ) -> Option<geom::Geometry<geom::FeatureVertex, geom::FeatureMetadata>> {
-        if !self.queued { 
-            return None; 
-        }
-
-        let feature = self.features[self.idx];
-
-        let result = util::load_features_from_geojson(assets, feature)
-            .and_then(|features| {
-                geom::Geometry::build_feature_geometry_earcut(
-                    device, 
-                    features.as_slice(),
-                    self.slices, 
-                    self.stacks,
-                    self.globe_radius, 
-                ).map_err(anyhow::Error::from)
-            });
+    fn request(&mut self, assets: &backend::Assets) {
+        assets.request(self.features[self.idx]);
 
         self.idx += 1;
         self.idx %= self.features.len();
+    }
 
-        match result {
-            Ok(geometry) => {
-                self.queued = false; Some(geometry)
-            }, Err(_) => None,
-        }
+    fn load(
+        &mut self, device: &wgpu::Device, bytes: &[u8],
+    ) -> anyhow::Result<geom::Geometry<geom::FeatureVertex, geom::FeatureMetadata>> {
+        use std::str;
+
+        let features = str::from_utf8(bytes)?
+            .parse::<geojson::GeoJson>()?;
+
+        let geojson::FeatureCollection { 
+            features, .. 
+        } = geojson::FeatureCollection::try_from(features)?;
+
+        let geometry = geom::Geometry::build_feature_geometry(
+            device, 
+            features.as_slice(),
+            self.slices, 
+            self.stacks,
+            self.globe_radius, 
+        )?;
+
+        Ok(geometry)
     }
 }
