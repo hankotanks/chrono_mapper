@@ -12,6 +12,8 @@ const exec = async () => {
         if(canvas == undefined) {
             sinceLastFocus = setTimeout(focusCanvas, 300);
         } else {
+            canvas.focus();
+            
             canvas.onblur = _ => {
                 setTimeout(_ => { canvas.focus(); }, 1);
             };
