@@ -5,7 +5,10 @@ const exec = async () => {
     Wrapper.run();
 
     const resizeCanvas = _ => {
-        Wrapper.update_canvas(String(window.innerWidth), String(window.innerHeight));
+        Wrapper.set_screen_resolution(
+            String(window.innerWidth), 
+            String(window.innerHeight)
+        );
     };
 
     resizeCanvas();
