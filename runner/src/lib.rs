@@ -34,7 +34,7 @@ const CONFIG: app::Config = app::Config {
         ext("features/world_1300.geojson"),
         ext("features/world_1400.geojson"),
         // TODO: A better approach to multi-layered features
-        // "features/world_1492.geojson",
+        // ext("features/world_1492.geojson"),
         ext("features/world_1500.geojson"),
         ext("features/world_1530.geojson"),
         ext("features/world_1600.geojson"),
