@@ -28,7 +28,6 @@ pub mod wgpu {
 #[cfg(target_arch = "wasm32")]
 pub mod web {
     pub mod wasm_bindgen {
-        // TODO: I don't like re-exporting this
         pub use wasm_bindgen::*;
     }
     
@@ -73,8 +72,8 @@ impl From<winit::dpi::PhysicalSize<u32>> for Size {
     }
 }
 
-#[derive(Debug)]
 #[derive(Clone, Copy)]
+#[derive(Debug)]
 pub enum AppEvent {
     Key {code: event::KeyCode, state: event::ElementState },
     Mouse { button: event::MouseButton, state: event::ElementState, cursor: Position },
@@ -91,15 +90,14 @@ pub trait App {
 
     fn new(
         config: Self::Config,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &wgpu::Device, queue: &wgpu::Queue,
+        assets: Assets,
     ) -> impl std::future::Future<Output = anyhow::Result<Self>> 
         where Self: Sized;
 
     fn update(
         &mut self, 
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &wgpu::Device, queue: &wgpu::Queue,
         bytes: &[u8],
         asset_path: &str,
     ) -> Result<(), Self::UpdateError>;
@@ -112,9 +110,8 @@ pub trait App {
 
     fn handle_event(
         &mut self, 
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        assets: &Assets,
+        device: &wgpu::Device, queue: &wgpu::Queue,
+        assets: Assets, 
         event: AppEvent,
     ) -> bool;
 }
@@ -141,7 +138,14 @@ impl<'a, C: AppConfig, A: App<Config = C>> Package<'a, C, A> {
             state::State::new(&event_loop, config.surface_format()).await
         }?;
 
-        let app = (A::new(config, &state.device, &state.queue).await)?;
+        let assets = Assets {
+            proxy: event_loop.create_proxy(),
+            loading: false,
+        };
+
+        let app = {
+            A::new(config, &state.device, &state.queue, assets).await
+        }?;
 
         Ok(Self { app, state, event_loop })
     }
@@ -184,18 +188,6 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
     event_loop.run(move |event, event_target| {
         use winit::event::{Event, WindowEvent};
 
-        #[cfg(target_arch = "wasm32")]
-        if let Some(physical_size) = unsafe { SCREEN_RESOLUTION.take() } {
-            state.resize(physical_size);
-
-            let event = AppEvent::Resized(physical_size.into());
-
-            let assets = Assets { proxy: proxy.clone(), loading };
-            if app.handle_event(&state.device, &state.queue, &assets, event) {
-                state.window.request_redraw();
-            }
-        }
-
         match event {
             Event::WindowEvent {
                 event: WindowEvent::RedrawRequested,
@@ -211,12 +203,7 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
             },
             Event::UserEvent(req) => {
                 match req {
-                    Request::Loading => {
-                        loading = true;
-
-                        #[cfg(feature = "logging")]
-                        log::debug!("started loading an asset");
-                    },
+                    Request::Loading => loading = true,
                     Request::Fulfilled { bytes, path } => {
                         loading = false;
 
@@ -238,7 +225,7 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
                 Ok(events) => {
                     for event in events {
                         let assets = Assets { proxy: proxy.clone(), loading };
-                        if app.handle_event(&state.device, &state.queue, &assets, event) {
+                        if app.handle_event(&state.device, &state.queue, assets, event) {
                             state.window.request_redraw();
                         }
                     }
@@ -258,36 +245,6 @@ pub async fn start<C, A>(config: C) -> Result<(), String>
 
     Ok(())
 }
-
-#[cfg(target_arch = "wasm32")]
-pub fn set_screen_resolution(
-    w: wasm_bindgen::JsValue, h: wasm_bindgen::JsValue,
-) -> Result<(), String> {
-    unsafe fn inner(
-        w: wasm_bindgen::JsValue, h: wasm_bindgen::JsValue,
-    ) -> anyhow::Result<winit::dpi::PhysicalSize<u32>> {
-        let width: u32 = w.as_string()
-            .ok_or(state::WebError::new("parse canvas width"))?
-            .parse()?;
-    
-        let height: u32 = h.as_string()
-            .ok_or(state::WebError::new("parse canvas height"))?
-            .parse()?;
-
-        Ok(winit::dpi::PhysicalSize { width, height })
-    }
-
-    unsafe {
-        let size = inner(w, h).map_err(|e| e.to_string())?;
-
-        let _ = SCREEN_RESOLUTION.insert(size);
-    }
-
-    Ok(())
-}
-
-#[cfg(target_arch = "wasm32")]
-static mut SCREEN_RESOLUTION: Option<winit::dpi::PhysicalSize<u32>> = None;
 
 #[derive(Clone, Copy)]
 pub enum AssetLocator { 
@@ -428,10 +385,12 @@ impl Assets {
                 }
 
                 #[cfg(not(target_arch = "wasm32"))] {
-                    let path_full = std::path::Path::new(Self::WORKSPACE_ROOT)
+                    use std::{path, fs};
+
+                    let path_full = path::Path::new(Self::WORKSPACE_ROOT)
                         .join(path);
 
-                    let retr = match std::fs::read(path_full) {
+                    let retr = match fs::read(path_full) {
                         Ok(bytes) => Request::Fulfilled { path: path.to_string(), bytes },
                         Err(_) => Request::Failed,
                     };

@@ -3,10 +3,11 @@ mod feature_labels;
 mod util;
 mod camera;
 mod map_tex;
+mod loader;
 
 use backend::wgpu as wgpu;
 
-use std::mem;
+use std::{mem, sync};
 
 #[derive(Clone, Copy)]
 pub struct Config<'a> {
@@ -42,7 +43,7 @@ pub struct App {
     globe_radius: f32,
     globe: geom::Geometry<geom::GlobeVertex, ()>,
     globe_pipeline: wgpu::RenderPipeline,
-    features: FeatureManager,
+    features: loader::FeatureManager,
     feature_geometry: geom::Geometry<geom::FeatureVertex, geom::FeatureMetadata>,
     feature_pipeline: wgpu::RenderPipeline,
     feature_labels: feature_labels::LabelEngine,
@@ -53,12 +54,13 @@ pub struct App {
 
 impl backend::App for App {
     type Config = Config<'static>;
-    type UpdateError = glyphon::PrepareError;
+    type UpdateError = loader::LoaderError;
     type SubmissionError = glyphon::RenderError;
 
     async fn new(
         config: Self::Config, 
         device: &wgpu::Device, queue: &wgpu::Queue,
+        assets: backend::Assets,
     ) -> anyhow::Result<Self> where Self: Sized {
         let basemap = map_tex::Basemap::from_bytes(
             backend::Assets::retrieve(config.basemap)?, 
@@ -277,12 +279,24 @@ impl backend::App for App {
             }
         }); 
 
+        let feature_label_font_bytes = sync::Arc::new({
+            backend::Assets::retrieve(config.font_asset_path)?.to_vec()
+        });
+
         let feature_labels = feature_labels::LabelEngine::new(
             device,
             queue,
             config.surface_format,
-            backend::Assets::retrieve(config.font_asset_path)?.to_vec(),
+            sync::Arc::clone(&feature_label_font_bytes),
             config.font_family,
+        );
+
+        let features = loader::FeatureManager::new(
+            device,
+            queue,
+            config,
+            sync::Arc::clone(&feature_label_font_bytes),
+            assets,
         );
 
         Ok(Self {
@@ -295,7 +309,7 @@ impl backend::App for App {
             globe_radius: config.globe_radius,
             globe,
             globe_pipeline,
-            features: FeatureManager::from(config),
+            features,
             feature_geometry: geom::Geometry::empty(device),
             feature_pipeline,
             feature_labels,
@@ -319,9 +333,8 @@ impl backend::App for App {
     
     fn handle_event(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        assets: &backend::Assets,
+        device: &wgpu::Device, queue: &wgpu::Queue,
+        assets: backend::Assets,
         event: backend::AppEvent,
     ) -> bool {
         let Self {
@@ -339,18 +352,26 @@ impl backend::App for App {
         } = self;
 
         match event {
-            backend::AppEvent::Key { 
-                code: backend::event::KeyCode::Space, 
-                state: backend::event::ElementState::Released, 
-            } => features.request(assets),
-            backend::AppEvent::Resized(size) => {
-                *screen_resolution = size;
-            },
-            event => {
-                if !camera.handle_event(event) {
-                    return false;
+            backend::AppEvent::Resized(size) => { 
+                #[allow(unused_variables)]
+                if let Err(e) = features.prepare(device, queue, size) {
+                    #[cfg(feature = "logging")] 
+                    backend::log::debug!("Failed to prepare layer selection pane.\n{e}");
                 }
-            }
+                
+                *screen_resolution = size; 
+            },
+            backend::AppEvent::Mouse { 
+                button: backend::event::MouseButton::Left, 
+                state: backend::event::ElementState::Pressed, 
+                cursor,
+            } if features.request(&assets, cursor) => { /*  */ },
+            backend::AppEvent::Key { 
+                code: backend::event::KeyCode::Tab, 
+                state: backend::event::ElementState::Released,
+            } => { features.toggle_visibility(); },
+            event if !camera.handle_event(event) => { return false; },
+            _ => { /*  */ },
         }
 
         let camera_uniform = camera
@@ -380,8 +401,7 @@ impl backend::App for App {
                         screen_rays.push(util::cursor_to_world_ray(view, proj, cursor));
                     }
                 }
-            },
-            _ => { /*  */ },
+            }, _ => { /*  */ },
         }
 
         if !camera.movement_in_progress() {
@@ -392,17 +412,20 @@ impl backend::App for App {
                 *globe_radius,
             );
 
-            // TODO: Put more thought into how to handle this / if it needs to be
-            if feature_labels.prepare(device, queue, *screen_resolution).is_err() {
+            #[allow(unused_variables)]
+            if let Err(e) = feature_labels.prepare(device, queue, *screen_resolution) {
                 // clear screen rays to prevent rendering broken labels
                 screen_rays.clear();
+
+                #[cfg(feature = "logging")] 
+                backend::log::debug!("Failed to position feature labels.\n{e}");
             }
         }
 
         queue.write_buffer(
             camera_buffer, 
             0, 
-            bytemuck::cast_slice(&[camera_uniform])
+            bytemuck::cast_slice(&[camera_uniform]),
         );
 
         if let Some(basemap_data) = basemap_data.take() {
@@ -446,7 +469,7 @@ impl backend::App for App {
             globe_radius, ..
         } = self;
 
-        match self.features.load(device, bytes) {
+        match self.features.load(device, queue, bytes, *screen_resolution) {
             Ok(repl) => {
                 mem::replace(feature_geometry, repl).destroy();
 
@@ -457,7 +480,9 @@ impl backend::App for App {
                     *globe_radius,
                 );
     
-                feature_labels.prepare(device, queue, *screen_resolution)?;
+                feature_labels
+                    .prepare(device, queue, *screen_resolution)
+                    .map_err(loader::LoaderError::LabelFailure)?;
             },
             #[allow(unused_variables)]
             Err(e) => {
@@ -532,6 +557,7 @@ impl App {
     ) -> Result<(), glyphon::RenderError> {
         let Self {
             camera_bind_group,
+            features,
             feature_geometry: geom::Geometry {
                 vertex_buffer,
                 indices,
@@ -581,68 +607,8 @@ impl App {
             feature_labels.render(&mut pass)?;
         }
 
+        features.render(&mut pass)?;
+
         Ok(())
-    }
-}
-
-struct FeatureManager {
-    idx: usize,
-    features: &'static [backend::AssetRef<'static>],
-    slices: u32,
-    stacks: u32,
-    globe_radius: f32,
-}
-
-impl From<Config<'static>> for FeatureManager {
-    fn from(value: Config<'static>) -> Self {
-        let Config {
-            slices,
-            stacks,
-            globe_radius,
-            features, ..
-        } = value;
-        
-        Self {
-            idx: 0,
-            features,
-            slices,
-            stacks,
-            globe_radius,
-        }
-    }
-}
-
-impl FeatureManager {
-    fn request(&mut self, assets: &backend::Assets) {
-        if assets.request(self.features[self.idx]).is_ok() {
-            self.idx += 1;
-            self.idx %= self.features.len();
-        } else {
-            #[cfg(feature = "logging")]
-            backend::log::debug!("load interrupted");
-        }
-    }
-
-    fn load(
-        &mut self, device: &wgpu::Device, bytes: &[u8],
-    ) -> anyhow::Result<geom::Geometry<geom::FeatureVertex, geom::FeatureMetadata>> {
-        use std::str;
-
-        let features = str::from_utf8(bytes)?
-            .parse::<geojson::GeoJson>()?;
-
-        let geojson::FeatureCollection { 
-            features, .. 
-        } = geojson::FeatureCollection::try_from(features)?;
-
-        let geometry = geom::Geometry::build_feature_geometry(
-            device, 
-            features.as_slice(),
-            self.slices, 
-            self.stacks,
-            self.globe_radius, 
-        )?;
-
-        Ok(geometry)
     }
 }

@@ -61,15 +61,13 @@ impl LabelEngine {
         device: &wgpu::Device, 
         queue: &wgpu::Queue, 
         surface_format: wgpu::TextureFormat,
-        font_bytes: Vec<u8>,
+        font_bytes: std::sync::Arc<Vec<u8>>,
         font_family: &'static str,
     ) -> Self {
         let font_system = glyphon::FontSystem::new_with_fonts({
-            use std::sync::Arc;
-
             use glyphon::fontdb::Source;
 
-            Some(Source::Binary(Arc::new(font_bytes)))
+            Some(Source::Binary(font_bytes))
         });
 
         let swash_cache = glyphon::SwashCache::new();

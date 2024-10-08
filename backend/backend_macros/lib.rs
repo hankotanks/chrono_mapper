@@ -67,15 +67,6 @@ fn get_impl(attr: proc_macro::TokenStream, name: proc_macro::Ident) -> proc_macr
     quote::quote! {
         impl #name {
             #[no_mangle]
-            #[cfg(target_arch = "wasm32")]
-            pub fn set_screen_resolution(
-                w: wasm_bindgen::JsValue, 
-                h: wasm_bindgen::JsValue,
-            ) -> Result<(), String> { 
-                backend::set_screen_resolution(w, h)
-            }
-
-            #[no_mangle]
             pub async fn run() -> Result<(), String> {
                 backend::start::<#ty_cfg, #ty_app>(#config).await
             }
