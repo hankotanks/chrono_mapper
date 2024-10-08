@@ -10,43 +10,7 @@ impl WebError {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-fn surface_config_update(
-    config: &mut wgpu::SurfaceConfiguration, 
-    limits: wgpu::Limits,
-    size: winit::dpi::PhysicalSize<u32>,
-) {
-    fn nearest_power_of_two(mut n: u32) -> u32 {
-        if n == 0 {
-            1
-        } else if n & (n - 1) == 0 {
-            n
-        } else {
-            n -= 1;
-            n |= n >> 1;
-            n |= n >> 2;
-            n |= n >> 4;
-            n |= n >> 8;
-            n |= n >> 16;
-            n += 1;
-            n >> 1
-        }
-    }
-
-    let wgpu::SurfaceConfiguration {
-        width,
-        height, ..
-    } = config;
-
-    *width = nearest_power_of_two(size.width)
-        .clamp(1, limits.max_texture_dimension_2d);
-
-    *height = nearest_power_of_two(size.height)
-        .clamp(1, limits.max_texture_dimension_2d);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn surface_config_update(
+fn configure_surface_resolution(
     config: &mut wgpu::SurfaceConfiguration, 
     limits: wgpu::Limits,
     size: winit::dpi::PhysicalSize<u32>,
@@ -171,7 +135,7 @@ impl<'a> State<'a> {
             desired_maximum_frame_latency: 1,
         };
 
-        surface_config_update(
+        configure_surface_resolution(
             &mut surface_config,
             LIMITS.clone(),
             window.inner_size(),
@@ -200,7 +164,7 @@ impl<'a> State<'a> {
             surface_config, ..
         } = self;
 
-        surface_config_update(
+        configure_surface_resolution(
             surface_config, 
             required_limits.clone(), 
             size
@@ -242,7 +206,7 @@ impl<'a> State<'a> {
                     surface, ..
                 } = self;
 
-                surface_config_update(
+                configure_surface_resolution(
                     surface_config, 
                     required_limits.clone(), 
                     physical_size
