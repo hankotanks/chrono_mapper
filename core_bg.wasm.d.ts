@@ -4,8 +4,6 @@ export const memory: WebAssembly.Memory;
 export function __wbg_wrapper_free(a: number, b: number): void;
 export function run(a: number): void;
 export function wrapper_run(): number;
-export function set_screen_resolution(a: number, b: number, c: number): void;
-export function wrapper_set_screen_resolution(a: number, b: number, c: number): void;
 export function wgpu_compute_pass_set_pipeline(a: number, b: number): void;
 export function wgpu_compute_pass_set_bind_group(a: number, b: number, c: number, d: number, e: number): void;
 export function wgpu_compute_pass_set_push_constant(a: number, b: number, c: number, d: number): void;
@@ -65,6 +63,5 @@ export function _dyn_core__ops__function__FnMut__A____Output___R_as_wasm_bindgen
 export function _dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h5c8a53bde43fbddb(a: number, b: number): void;
 export function _dyn_core__ops__function__FnMut__A____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h374e20684826a3c5(a: number, b: number, c: number): void;
 export function _dyn_core__ops__function__FnMut__A____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__hae3df546bea2c52c(a: number, b: number, c: number): void;
-export function __wbindgen_add_to_stack_pointer(a: number): number;
 export function __wbindgen_exn_store(a: number): void;
 export function wasm_bindgen__convert__closures__invoke2_mut__h0dfa783b443e06db(a: number, b: number, c: number, d: number): void;

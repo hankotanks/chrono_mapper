@@ -8,11 +8,6 @@ export class Wrapper {
 * @returns {Promise<void>}
 */
   static run(): Promise<void>;
-/**
-* @param {any} w
-* @param {any} h
-*/
-  static set_screen_resolution(w: any, h: any): void;
 }
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -22,8 +17,6 @@ export interface InitOutput {
   readonly __wbg_wrapper_free: (a: number, b: number) => void;
   readonly run: (a: number) => void;
   readonly wrapper_run: () => number;
-  readonly set_screen_resolution: (a: number, b: number, c: number) => void;
-  readonly wrapper_set_screen_resolution: (a: number, b: number, c: number) => void;
   readonly wgpu_compute_pass_set_pipeline: (a: number, b: number) => void;
   readonly wgpu_compute_pass_set_bind_group: (a: number, b: number, c: number, d: number, e: number) => void;
   readonly wgpu_compute_pass_set_push_constant: (a: number, b: number, c: number, d: number) => void;
@@ -83,7 +76,6 @@ export interface InitOutput {
   readonly _dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h5c8a53bde43fbddb: (a: number, b: number) => void;
   readonly _dyn_core__ops__function__FnMut__A____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h374e20684826a3c5: (a: number, b: number, c: number) => void;
   readonly _dyn_core__ops__function__FnMut__A____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__hae3df546bea2c52c: (a: number, b: number, c: number) => void;
-  readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
   readonly __wbindgen_exn_store: (a: number) => void;
   readonly wasm_bindgen__convert__closures__invoke2_mut__h0dfa783b443e06db: (a: number, b: number, c: number, d: number) => void;
 }
