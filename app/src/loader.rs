@@ -29,6 +29,7 @@ impl error::Error for LoaderError {
 
 pub struct FeatureManager {
     idx: usize,
+    idx_scroll: usize,
     toggled: bool,
     feature_paths: &'static [backend::AssetRef<'static>],
     slices: u32,
@@ -89,6 +90,7 @@ impl FeatureManager {
 
         Self {
             idx: 0,
+            idx_scroll: 0,
             toggled: true,
             feature_paths: config.features,
             slices: config.slices,
@@ -103,39 +105,86 @@ impl FeatureManager {
         }
     }
 
-    pub fn toggle_visibility(&mut self) {
-        let Self { toggled, .. } = self;
-
-        *toggled = !(*toggled);
-    }
-
-    pub fn request(
+    pub fn handle_event(
         &mut self,
-        assets: &backend::Assets,
-        #[allow(unused_variables)]
-        backend::Position { x, y }: backend::Position,
+        device: &wgpu::Device, 
+        queue: &wgpu::Queue,
+        event: backend::AppEvent,
+        assets: backend::Assets,
     ) -> bool {
-        let Self {
-            idx,
-            toggled, 
-            feature_paths, 
-            buttons, ..
-        } = self;
+        match event {
+            backend::AppEvent::Resized(size) => {
+                let line_maxima = (size.height as f32 / Self::METRICS.line_height).floor() as usize;
 
-        if !(*toggled) { return false; }
-
-        let temp = (y / Self::METRICS.line_height).floor() as usize;
-        match buttons.layout_runs().nth(temp) {
-            Some(glyphon::LayoutRun { line_w, .. }) if x < line_w.ceil() => {
-                *idx = temp;
-
-                if assets.request(feature_paths[*idx]).is_err() {
-                    #[cfg(feature = "logging")]
-                    backend::log::debug!("load interrupted");
+                if self.feature_paths.len() - self.idx_scroll < line_maxima {
+                    if let Some(idx_temp) = self.feature_paths.len().checked_sub(line_maxima) {
+                        self.idx_scroll = idx_temp;
+                    }
                 }
 
+                #[allow(unused_variables)]
+                if let Err(e) = self.prepare(device, queue, size) {
+                    #[cfg(feature = "logging")] 
+                    backend::log::debug!("Failed to prepare layer selection pane.\n{e}");
+                }
+
+                // other components need to process side changes
+                false
+            },
+            backend::AppEvent::MouseScroll { delta } if self.toggled => {
+                let (width, height) = self.buttons.size();
+
+                let line_maxima = (height / Self::METRICS.line_height).floor() as usize;
+                
+                if delta > 0. && (self.feature_paths.len() - self.idx_scroll) > line_maxima {
+                    self.idx_scroll += 1;
+                } else if delta < 0. && self.idx_scroll > 0 {
+                    self.idx_scroll -= 1;
+                }
+
+                let screen_resolution = backend::Size { 
+                    width: width as u32, 
+                    height: height as u32,
+                };
+
+                #[allow(unused_variables)]
+                if let Err(e) = self.prepare(device, queue, screen_resolution) {
+                    #[cfg(feature = "logging")] 
+                    backend::log::debug!("Failed to prepare layer selection pane.\n{e}");
+                }
+
+                self.buttons.shape_until_scroll(&mut self.font_system);
+
                 true
-            }, _ => false,
+            }
+            backend::AppEvent::Mouse { 
+                button: backend::event::MouseButton::Left, 
+                state: backend::event::ElementState::Pressed, 
+                cursor: backend::Position { x, y },
+            } if self.toggled => {
+                let temp = (y / Self::METRICS.line_height).floor() as usize;
+                match self.buttons.layout_runs().nth(temp) {
+                    Some(glyphon::LayoutRun { line_w, .. }) if x < line_w.ceil() => {
+                        self.idx = temp;
+
+                        if assets.request(self.feature_paths[self.idx]).is_err() {
+                            #[cfg(feature = "logging")]
+                            backend::log::debug!("load interrupted");
+                        }
+
+                        true
+                    }, _ => false,
+                }
+            },
+            backend::AppEvent::Key { 
+                code: backend::event::KeyCode::Tab, 
+                state: backend::event::ElementState::Released,
+            } => { 
+                self.toggled = !self.toggled; 
+                
+                true
+            },
+            _ => false,
         }
     }
 
@@ -147,6 +196,7 @@ impl FeatureManager {
     ) -> Result<(), glyphon::PrepareError> {
         let Self {
             idx,
+            idx_scroll,
             feature_paths,
             buttons,
             font_system, 
@@ -160,14 +210,13 @@ impl FeatureManager {
             .iter()
             .copied()
             .enumerate()
+            .skip(*idx_scroll)
             .map(|(temp, backend::AssetRef { path, .. })| {
                 let color = if *idx == temp {
                     Self::COLOR_FOCUS
                 } else {
                     Self::COLOR_BASIC
-                };
-
-                (path, font_attrs.color(color))
+                }; (path, font_attrs.color(color))
             }).flat_map(|a| [a, ("\n", font_attrs.color(Self::COLOR_BASIC))]);
 
         buttons.set_rich_text(

@@ -34,7 +34,7 @@ impl backend::AppConfig for Config<'static> {
 }
 
 pub struct App {
-    basemap_data: Option<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>>,
+    #[allow(dead_code)] 
     texture: wgpu::Texture,
     texture_bind_group: wgpu::BindGroup,
     camera: camera::Camera,
@@ -83,6 +83,25 @@ impl backend::App for App {
                 view_formats: &[config.surface_format],
             }
         });
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            }, &basemap.buffer,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * basemap.buffer_size.width),
+                rows_per_image: Some(basemap.buffer_size.height),
+            },
+            wgpu::Extent3d {
+                width: basemap.buffer_size.width,
+                height: basemap.buffer_size.height,
+                depth_or_array_layers: 1,
+            },
+        );
 
         let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -300,7 +319,6 @@ impl backend::App for App {
         );
 
         Ok(Self {
-            basemap_data: Some(basemap.buffer),
             texture,
             texture_bind_group,
             camera: camera::Camera::new(config.globe_radius),
@@ -338,8 +356,6 @@ impl backend::App for App {
         event: backend::AppEvent,
     ) -> bool {
         let Self {
-            basemap_data,
-            texture,
             camera,
             camera_buffer,
             globe_radius,
@@ -352,24 +368,8 @@ impl backend::App for App {
         } = self;
 
         match event {
-            backend::AppEvent::Resized(size) => { 
-                #[allow(unused_variables)]
-                if let Err(e) = features.prepare(device, queue, size) {
-                    #[cfg(feature = "logging")] 
-                    backend::log::debug!("Failed to prepare layer selection pane.\n{e}");
-                }
-                
-                *screen_resolution = size; 
-            },
-            backend::AppEvent::Mouse { 
-                button: backend::event::MouseButton::Left, 
-                state: backend::event::ElementState::Pressed, 
-                cursor,
-            } if features.request(&assets, cursor) => { /*  */ },
-            backend::AppEvent::Key { 
-                code: backend::event::KeyCode::Tab, 
-                state: backend::event::ElementState::Released,
-            } => { features.toggle_visibility(); },
+            event if features.handle_event(device, queue, event, assets) => { return true; }
+            backend::AppEvent::Resized(size) => { *screen_resolution = size; },
             event if !camera.handle_event(event) => { return false; },
             _ => { /*  */ },
         }
@@ -427,27 +427,6 @@ impl backend::App for App {
             0, 
             bytemuck::cast_slice(&[camera_uniform]),
         );
-
-        if let Some(basemap_data) = basemap_data.take() {
-            queue.write_texture(
-                wgpu::ImageCopyTexture {
-                    texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                }, &basemap_data,
-                wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * basemap_data.width()),
-                    rows_per_image: Some(basemap_data.height()),
-                },
-                wgpu::Extent3d {
-                    width: basemap_data.width(),
-                    height: basemap_data.height(),
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
 
         true
     }
