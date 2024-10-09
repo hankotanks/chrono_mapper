@@ -165,7 +165,7 @@ impl FeatureManager {
                 let temp = (y / Self::METRICS.line_height).floor() as usize;
                 match self.buttons.layout_runs().nth(temp) {
                     Some(glyphon::LayoutRun { line_w, .. }) if x < line_w.ceil() => {
-                        self.idx = temp;
+                        self.idx = self.idx_scroll + temp;
 
                         if assets.request(self.feature_paths[self.idx]).is_err() {
                             #[cfg(feature = "logging")]
