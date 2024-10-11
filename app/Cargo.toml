@@ -1,0 +1,22 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+logging = ["backend/logging"]
+
+[lib]
+name = "app_lib"
+path = "lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "app_bin"
+path = "lib.rs"
+
+[dependencies.backend]
+path = "../backend"
+
+[dependencies]
+anyhow = "1.0.81"

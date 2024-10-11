@@ -1,0 +1,4 @@
+[env]
+BACKEND_STATIC_ASSETS_DIR = { value = "../assets" }
+BACKEND_OUT_DIR = { value = "../pkg" }
+BACKEND_LOCAL_ASSETS_DIR = { value = "../features" }

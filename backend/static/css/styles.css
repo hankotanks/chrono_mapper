@@ -1,0 +1,19 @@
+html, body {
+    display: flex;
+    margin: 0;
+    padding: 0;
+}
+
+html { 
+    overflow-x: hidden;
+    overflow-y: hidden;
+    background-color: black;
+}
+
+canvas {
+    outline: none;
+    display: block;
+    position: fixed;
+    width: 100vw;
+    height: 100vh;
+}
