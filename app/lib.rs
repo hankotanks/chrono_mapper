@@ -20,6 +20,7 @@ impl backend::App for App {
         _config: Self::Config, 
         _data: backend::AppData<'_>,
     ) -> Result<Self, Self::RenderError> where Self: Sized {
+        println!("{:?}", std::env::var("BACKEND_OUT_DIR"));
         Ok(Self(false))
     }
 
@@ -46,7 +47,7 @@ impl backend::App for App {
         if let backend::AppEvent::Request(req) = event {
             match req {
                 backend::Request::Fulfilled { path, bytes } => backend::log::warn!("fulfilled asset request {path}"),
-                backend::Request::Failed(_) => backend::log::warn!("failed to fulfill asset request"),
+                backend::Request::Failed(path) => backend::log::warn!("failed to fulfill asset request {path}"),
                 backend::Request::Loading(_) => backend::log::warn!("started loading asset"),
             }
         }

@@ -51,22 +51,29 @@ fn main() -> io::Result<()> {
     let root = get_env_var("CARGO_MANIFEST_DIR")?;
     let root = path::Path::new(&root);
 
-    let out = get_env_var("BACKEND_OUT_DIR")?;
-    let out = path::Path::new(&out);
+    let out = match get_env_var("BACKEND_OUT_DIR") {
+        Ok(backend_out_dir) => backend_out_dir,
+        Err(_) => {
+            let out = get_env_var("OUT_DIR")?;
+            println!("cargo:rustc-env=BACKEND_OUT_DIR={out}");
+            out
+        },
+    }; let out = path::Path::new(&out);
 
     copy_dir_into(root.join("js"), &out)?;
     copy_dir_into(root.join("static"), &out)?;
 
-    let local_dir_var = get_env_var("BACKEND_LOCAL_ASSETS_DIR")?;
-    let local_dir = path::Path::new(&local_dir_var);
-    let local_dir_name = local_dir
-        .file_name()
-        .ok_or(io::Error::new(io::ErrorKind::InvalidData, format!("Failed to find the local assets directory (or it terminated in ..): `{}`", local_dir_var)))?;
-    let local_dir_name = local_dir_name
-        .to_str()
-        .ok_or(io::Error::new(io::ErrorKind::InvalidData, format!("The path specified by `BACKEND_LOCAL_ASSETS_DIR` contained non-UTF8 symbols: {}", local_dir_name.to_string_lossy())))?;
-
-    copy_dir_into(local_dir, out.join(local_dir_name))?;
+    if let Ok(local_dir_var) = get_env_var("BACKEND_LOCAL_ASSETS_DIR") {
+        let local_dir = path::Path::new(&local_dir_var);
+        let local_dir_name = local_dir
+            .file_name()
+            .ok_or(io::Error::new(io::ErrorKind::InvalidData, format!("Failed to find the local assets directory (or it terminated in ..): `{}`", local_dir_var)))?;
+        let local_dir_name = local_dir_name
+            .to_str()
+            .ok_or(io::Error::new(io::ErrorKind::InvalidData, format!("The path specified by `BACKEND_LOCAL_ASSETS_DIR` contained non-UTF8 symbols: {}", local_dir_name.to_string_lossy())))?;
+    
+        copy_dir_into(local_dir, out.join(local_dir_name))?;
+    }
 
     Ok(())
 }
