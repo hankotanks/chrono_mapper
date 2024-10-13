@@ -7,6 +7,10 @@ impl backend::AppConfig for Config {
     fn surface_format(self) -> backend::wgpu::TextureFormat {
         backend::wgpu::TextureFormat::Rgba8Unorm
     }
+    
+    fn window_title<'a>(self) -> &'a str {
+        "ChronoMapper"
+    }
 }
 
 pub struct App(bool);
@@ -44,11 +48,14 @@ impl backend::App for App {
         }
 
         #[cfg(feature = "logging")]
-        if let backend::AppEvent::Request(req) = event {
-            match req {
-                backend::Request::Fulfilled { path, bytes } => backend::log::warn!("fulfilled asset request {path}"),
-                backend::Request::Failed(path) => backend::log::warn!("failed to fulfill asset request {path}"),
-                backend::Request::Loading(_) => backend::log::warn!("started loading asset"),
+        if let backend::AppEvent::Request(backend::Request { path, state }) = event {
+            match state {
+                backend::RequestState::Fulfilled(bytes) => //
+                    backend::log::warn!("fulfilled asset request {}:\n{:?}", path, bytes),
+                backend::RequestState::Failed => //
+                    backend::log::warn!("failed to fulfill asset request {path}"),
+                backend::RequestState::Loading => //
+                    backend::log::warn!("started loading asset {path}"),
             }
         }
         

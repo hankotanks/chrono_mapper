@@ -60,8 +60,8 @@ fn main() -> io::Result<()> {
         },
     }; let out = path::Path::new(&out);
 
-    copy_dir_into(root.join("js"), &out)?;
-    copy_dir_into(root.join("static"), &out)?;
+    copy_dir_into(root.join("js"), out)?;
+    copy_dir_into(root.join("static"), out)?;
 
     if let Ok(local_dir_var) = get_env_var("BACKEND_LOCAL_ASSETS_DIR") {
         let local_dir = path::Path::new(&local_dir_var);

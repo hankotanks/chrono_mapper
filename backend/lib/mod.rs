@@ -45,8 +45,9 @@ pub mod native {
 
 mod state;
 
-#[derive(Clone, Copy)]
 #[derive(Debug)]
+#[derive(Clone, Copy)]
+#[derive(Default)]
 pub struct Position { pub x: f32, pub y: f32 }
 
 impl From<winit::dpi::PhysicalPosition<f32>> for Position {
@@ -56,9 +57,9 @@ impl From<winit::dpi::PhysicalPosition<f32>> for Position {
     }
 }
 
-#[derive(Default)]
-#[derive(Clone, Copy)]
 #[derive(Debug)]
+#[derive(Clone, Copy)]
+#[derive(Default)]
 pub struct Size { pub width: u32, pub height: u32 }
 
 impl From<winit::dpi::PhysicalSize<u32>> for Size {
@@ -69,40 +70,43 @@ impl From<winit::dpi::PhysicalSize<u32>> for Size {
 }
 
 #[derive(Clone, Copy)]
-pub enum Request<'a> {
-    Fulfilled { path: &'a str, bytes: &'a [u8] },
-    Failed(&'a str),
-    Loading(&'a str),
-}
-
-#[derive(Debug)]
-enum RequestInternal {
-    Fulfilled { path: String, bytes: Vec<u8>, }, 
-    Failed(String),
-    #[cfg(target_arch = "wasm32")]
-    Loading { path: String, root: String },
-}
-
-impl<'a> Into<Request<'a>> for &'a RequestInternal {
-    fn into(self) -> Request<'a> {
-        match self {
-            RequestInternal::Fulfilled { path, bytes } => Request::Fulfilled { path, bytes },
-            RequestInternal::Failed(path) => Request::Failed(path),
-            #[cfg(target_arch = "wasm32")]
-            RequestInternal::Loading { path, .. } => Request::Loading(path)
-        }
-    }
+pub enum RequestState<'a> {
+    Fulfilled(&'a [u8]),
+    Failed,
+    Loading,
 }
 
 #[derive(Clone, Copy)]
-pub enum AppEvent<'a> {
-    Key {code: event::KeyCode, state: event::ElementState },
-    Mouse { button: event::MouseButton, state: event::ElementState, cursor: Position },
-    MouseScroll { delta: f32 },
-    MouseScrollStopped,
-    MouseMotion { x: f32, y: f32 },
-    Resized(Size),
-    Request(Request<'a>),
+pub struct Request<'a> {
+    pub path: &'a str,
+    pub state: RequestState<'a>
+}
+
+enum RequestInternalState {
+    Fulfilled(Vec<u8>),
+    Failed,
+    #[cfg(target_arch = "wasm32")]
+    Loading(String),
+}
+
+struct RequestInternal {
+    path: String,
+    state: RequestInternalState,
+}
+
+impl<'a> From<&'a RequestInternal> for Request<'a> {
+    fn from(value: &'a RequestInternal) -> Self {
+        let RequestInternal { path, state } = value;
+
+        let state = match state {
+            RequestInternalState::Fulfilled(bytes) => RequestState::Fulfilled(bytes),
+            RequestInternalState::Failed => RequestState::Failed,
+            #[cfg(target_arch = "wasm32")]
+            RequestInternalState::Loading(_) => RequestState::Loading,
+        };
+
+        Request { path, state }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -141,9 +145,9 @@ impl<'a> AppData<'a> {
 
             match url() {
                 Ok(root) => {
-                    let req = RequestInternal::Loading {
+                    let req = RequestInternal {
                         path: String::from(path),
-                        root,
+                        state: RequestInternalState::Loading(root),
                     };
 
                     #[allow(unused_variables)]
@@ -161,10 +165,10 @@ impl<'a> AppData<'a> {
 
             #[allow(unused_variables)]
             let result = event_proxy.send_event({
-                match fs::read(Path::new(Self::OUT_DIR).join(path)) {
-                    Ok(bytes) => RequestInternal::Fulfilled { path: path.to_string(), bytes },
-                    Err(_) => RequestInternal::Failed(String::from(path)),
-                }
+                let state = match fs::read(Path::new(Self::OUT_DIR).join(path)) {
+                    Ok(bytes) => RequestInternalState::Fulfilled(bytes),
+                    Err(_) => RequestInternalState::Failed,
+                }; RequestInternal { path: path.to_string(), state }
             });
 
             #[cfg(feature = "logging")]
@@ -200,7 +204,20 @@ pub trait App {
 }
 
 pub trait AppConfig: Copy {
+    fn window_title<'a>(self) -> &'a str;
+    
     fn surface_format(self) -> wgpu::TextureFormat;
+}
+
+#[derive(Clone, Copy)]
+pub enum AppEvent<'a> {
+    Key {code: event::KeyCode, state: event::ElementState },
+    Mouse { button: event::MouseButton, state: event::ElementState, cursor: Position },
+    MouseScroll { delta: f32 },
+    MouseScrollStopped,
+    MouseMotion { x: f32, y: f32 },
+    Resized(Size),
+    Request(Request<'a>),
 }
 
 struct Package<'a, C: AppConfig, A: App<Config = C>> {
@@ -217,7 +234,9 @@ impl<'a, C: AppConfig, A: App<Config = C>> Package<'a, C, A> {
         let event_proxy = event_loop.create_proxy();
 
         let state = {
-            state::State::new(&event_loop, config.surface_format()).await
+            let surface_format = config.surface_format();
+            let window_title = config.window_title();
+            state::State::new(&event_loop, window_title, surface_format).await
         }?;
 
         let data = AppData {
@@ -295,10 +314,12 @@ impl<'a, C: AppConfig, A: App<Config = C>> UpdateHandler<'a, C, A> {
                 let path = String::from(url);
 
                 proxy.send_event({
-                    match req_bytes(url).await {
-                        Ok(bytes) => RequestInternal::Fulfilled { path, bytes },
-                        Err(_) => RequestInternal::Failed(path),
-                    }
+                    let state = match req_bytes(url).await {
+                        Ok(bytes) => RequestInternalState::Fulfilled(bytes),
+                        Err(_) => RequestInternalState::Failed,
+                    };
+
+                    RequestInternal { path, state }
                 })
             }
 
@@ -339,14 +360,17 @@ impl<'a, C: AppConfig, A: App<Config = C>> UpdateHandler<'a, C, A> {
                 };
 
                 #[cfg(target_arch = "wasm32")]
-                if let RequestInternal::Loading { path, root } = &req {
-                    let mut root = root.clone(); root.push_str(&path);
-
-                    let _ = asset_request_pending.insert(root);
+                if let RequestInternal {
+                    path,
+                    state: RequestInternalState::Loading(root),
+                } = &req {
+                    let _ = asset_request_pending.insert({
+                        let mut root = root.clone(); root.push_str(path); root
+                    });
 
                     event_target.set_control_flow(winit::event_loop::ControlFlow::Poll);
                 }
-                
+
                 if app.handle_event(data, event)? {
                     state.window.request_redraw();
                 }

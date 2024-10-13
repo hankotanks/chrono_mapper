@@ -24,7 +24,7 @@ pub struct State<'a> {
     pub device: wgpu::Device,
     pub surface: wgpu::Surface<'a>,
     pub surface_config: wgpu::SurfaceConfiguration,
-    pub cursor: Option<winit::dpi::PhysicalPosition<f32>>,
+    pub cursor: crate::Position,
     pub scroll_state: Option<chrono::DateTime<chrono::Local>>,
 }
 
@@ -35,14 +35,24 @@ impl<'a> State<'a> {
 
     pub async fn new(
         event_loop: &winit::event_loop::EventLoop<crate::RequestInternal>,
+        window_title: &str,
         surface_format: wgpu::TextureFormat,
     ) -> anyhow::Result<Self> {
         #[allow(non_snake_case)]
         let LIMITS = wgpu::Limits::downlevel_webgl2_defaults();
 
         let window = sync::Arc::new({
-            winit::window::WindowBuilder::new().build(event_loop)?
+            winit::window::WindowBuilder::new().with_title(window_title)
+                .build(event_loop)?
         });
+
+        // set the window title on wasm32
+        #[cfg(target_arch = "wasm32")] 
+        web_sys::window()
+            .ok_or(wgpu::rwh::HandleError::Unavailable)?
+            .document()
+            .ok_or(wgpu::rwh::HandleError::Unavailable)?
+            .set_title(window_title);
 
         fn create_surface_target<'a>(
             #[allow(unused_variables)] window: sync::Arc<winit::window::Window>,
@@ -149,7 +159,7 @@ impl<'a> State<'a> {
             device,
             surface,
             surface_config,
-            cursor: None,
+            cursor: crate::Position::default(),
             scroll_state: None,
         })
     }
@@ -207,13 +217,7 @@ impl<'a> State<'a> {
                 event: winit::event::WindowEvent::CursorMoved { position, .. }, 
                 window_id, .. 
             } if window_id == self.window.id() => {
-                let _ = self.cursor.insert(position.cast());
-            },
-            winit::event::Event::WindowEvent { 
-                event: winit::event::WindowEvent::CursorLeft { .. }, 
-                window_id, .. 
-            } if window_id == self.window.id() => {
-                let _ = self.cursor.take();
+                self.cursor = crate::Position::from(position.cast());
             },
             winit::event::Event::WindowEvent { 
                 event: winit::event::WindowEvent::KeyboardInput { 
@@ -230,12 +234,8 @@ impl<'a> State<'a> {
                     button, 
                     state, .. 
                 }, window_id, .. 
-            } if window_id == self.window.id() => match self.cursor {
-                Some(cursor) => {
-                    let cursor = crate::Position::from(cursor);
-                    
-                    curr.push(crate::AppEvent::Mouse { button, state, cursor });
-                }, None => { /*  */ },
+            } if window_id == self.window.id() => {
+                curr.push(crate::AppEvent::Mouse { button, state, cursor: self.cursor });
             },
             winit::event::Event::DeviceEvent {
                 event: winit::event::DeviceEvent::MouseMotion { 
