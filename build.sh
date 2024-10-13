@@ -1,5 +1,5 @@
 if [ $# -lt 1 ]; then
-  echo "The first argument must specify the target [native, wasm32]."
+  echo "The first argument must specify the target [native-run, wasm32-host, wasm32-publish]."
   read -p "Press enter to exit."
   exit 2
 else
@@ -17,8 +17,8 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -o|--out)
-      if [ "$TARGET" = 'native' ]; then
-        echo "Invalid argument: [--out, -o] is only valid when target is [wasm32]."
+      if [ "$TARGET" = 'native-run' ]; then
+        echo "Invalid argument: [--out, -o] is only valid when target is [wasm32-host, wasm32-publish]."
         read -p "Press enter to exit."
         exit 2
       fi
@@ -45,6 +45,16 @@ while [[ $# -gt 0 ]]; do
       shift
       shift
       ;;
+    -p|--port)
+      if ! [[ "$cms" =~ ^(native-run|wasm32-publish)$ ]]; then
+        echo "Port can only be specified with target [wasm32-host]"
+        read -p "Press enter to exit."
+        exit 2
+      fi
+      BACKEND_PORT="$2"
+      shift
+      shift
+      ;;
     -*|--*)
       echo "Unknown parameter provided: $1."
       read -p "Press enter to exit."
@@ -64,20 +74,43 @@ if [ -z "$BACKEND_STATIC_ASSETS_DIR" ]; then
 fi
 TEMP=$(pwd)
 cd $CRATE_DIR
-if [ "$TARGET" = 'native' ]; then 
+if [ "$TARGET" = 'native-run' ]; then 
   unset BACKEND_OUT_DIR
   cargo run --features="logging"
-elif [ "$TARGET" = 'wasm32' ]; then
+else
   if [ -z "$BACKEND_OUT_DIR" ]; then
-      echo "Must specify the output location of the wasm package [--out, -o]."
-      read -p "Press enter to exit."
-      exit 2
+    echo "Must specify the output location of the wasm package [--out, -o]."
+    read -p "Press enter to exit."
+    exit 2
   fi
   wasm-pack build --target web --no-pack --out-name core --out-dir $BACKEND_OUT_DIR --features="logging"
-  miniserve $BACKEND_OUT_DIR --index "index.html" -p 8080
-else
-  echo "The first argument must specify the target [native, wasm32]."
-  read -p "Press enter to exit."
-  exit 2
+  if [ "$TARGET" = 'wasm32-host' ]; then
+    if [ -z "$BACKEND_PORT" ]; then
+      BACKEND_PORT="8080"
+    fi
+    miniserve $BACKEND_OUT_DIR --index "index.html" -p $BACKEND_PORT
+  elif [ "$TARGET" = 'wasm32-publish' ]; then
+    git diff-files --quiet
+    if [ "$?" = 1 ]; then
+      echo "Unable to publish the package when there are uncommited changes in the current branch."
+      read -p "Press enter to exit."
+      exit 2
+    fi
+    BACKEND_CURR_BRANCH = $(git rev-parse --abbrev-ref HEAD)
+    cd $BACKEND_OUT_DIR
+    cd ..
+    git add -f pkg/\*
+    git commit -m.
+    git checkout gh-pages
+    git checkout $BACKEND_CURR_BRANCH -- pkg/*
+    git commit -am.
+    git checkout $BACKEND_CURR_BRANCH
+    git reset HEAD~
+    read -p "Press enter to exit."
+  else
+    echo "The first argument must specify the target [native-run, wasm32-host, wasm32-publish]."
+    read -p "Press enter to exit."
+    exit 2
+  fi
 fi
 cd $TEMP
