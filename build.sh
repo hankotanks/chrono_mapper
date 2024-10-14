@@ -113,7 +113,7 @@ else
     cd $BACKEND_TOP_LEVEL
     for TEMP_FILENAME in "${BACKEND_FILES_TO_COMMIT[@]}"
     do
-      git add $TEMP_FILENAME
+      git add -f $TEMP_FILENAME
       # or do whatever with individual element of the array
     done
     git commit -m.
