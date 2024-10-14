@@ -91,22 +91,32 @@ else
     miniserve $BACKEND_OUT_DIR --index "index.html" -p $BACKEND_PORT
   elif [ "$TARGET" = 'wasm32-publish' ]; then
     git diff-files --quiet
-    if [ "$?" = 1 ]; then
+    BACKEND_DIFF_EXIT_CODE=$(echo $?)
+    if [ "$BACKEND_DIFF_EXIT_CODE" = "1" ] || [ "$BACKEND_DIFF_EXIT_CODE" = "False" ]; then
       echo "Unable to publish the package when there are uncommited changes in the current branch."
       read -p "Press enter to exit."
       exit 2
     fi
-    BACKEND_CURR_BRANCH = $(git rev-parse --abbrev-ref HEAD)
     cd $BACKEND_OUT_DIR
     cd ..
     git add -f pkg/\*
     git commit -m.
     git checkout gh-pages
     git checkout $BACKEND_CURR_BRANCH -- pkg/*
-    git commit -am.
-    git checkout $BACKEND_CURR_BRANCH
-    git reset HEAD~
-    read -p "Press enter to exit."
+    BACKEND_TOP_LEVEL = $(git rev-parse --show-toplevel)
+    cp -a ./pkg/. $BACKEND_TOP_LEVEL
+    cd pkg
+    BACKEND_FILES_TO_COMMIT=()
+    for TEMP_FILENAME in *; do
+      BACKEND_FILES_TO_COMMIT+=($TEMP_FILENAME)
+    done
+    cd $BACKEND_TOP_LEVEL
+    for TEMP_FILENAME in "${BACKEND_FILES_TO_COMMIT[@]}"
+    do
+      git add $TEMP_FILENAME
+      # or do whatever with individual element of the array
+    done
+    git commit -m.
   else
     echo "The first argument must specify the target [native-run, wasm32-host, wasm32-publish]."
     read -p "Press enter to exit."
