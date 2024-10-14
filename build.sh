@@ -117,6 +117,7 @@ else
       # or do whatever with individual element of the array
     done
     git commit -m.
+    read -p "Press enter to exit."
   else
     echo "The first argument must specify the target [native-run, wasm32-host, wasm32-publish]."
     read -p "Press enter to exit."
