@@ -7,9 +7,9 @@ fn wasm_bindgen(items: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
 fn get_impl(attr: proc_macro::TokenStream, name: proc_macro::Ident) -> proc_macro::TokenStream {
     let mut attributes = [
-        proc_macro2::TokenStream::new(),
-        proc_macro2::TokenStream::new(),
-        proc_macro2::TokenStream::new(),
+        proc_macro::TokenStream::new(),
+        proc_macro::TokenStream::new(),
+        proc_macro::TokenStream::new(),
     ];
 
     let mut idx = 0;
@@ -17,45 +17,39 @@ fn get_impl(attr: proc_macro::TokenStream, name: proc_macro::Ident) -> proc_macr
     let mut skip = 0;
 
     for token in attr {
-        if skip > 0 {
-            skip -= 1; continue;
-        }
+        if skip > 0 { skip -= 1; continue; }
 
         match token {
-            proc_macro::TokenTree::Group(_) => panic!(),
-            proc_macro::TokenTree::Ident(ident) => {
-                let ident: proc_macro2::Ident = proc_macro2::Ident::new(
-                    ident.to_string().as_str(), 
-                    ident.span().into(),
-                );
-
-                let ident = proc_macro2::TokenTree::Ident(ident);
-
-                attributes[idx].extend(Some(ident));
+            proc_macro::TokenTree::Ident(ident) => //
+                attributes[idx].extend(Some(proc_macro::TokenTree::Ident(ident))),
+            proc_macro::TokenTree::Punct(punct) => {
+                if idx < 2 {
+                    match punct.as_char() {
+                        ',' => idx += 1,
+                        '=' => {
+                            idx += 1;
+                            skip += 1;
+                        }, _ => attributes[idx].extend({
+                            Some(proc_macro::TokenTree::Punct(punct))
+                        }),
+                    }
+                } else {
+                    attributes[idx].extend({
+                        Some(proc_macro::TokenTree::Punct(punct))
+                    })
+                }
             },
-            proc_macro::TokenTree::Punct(punct) => match punct.as_char() {
-                ',' => idx += 1,
-                '=' => {
-                    idx += 1;
-                    skip += 1;
-                },
-                ch => {
-                    let spacing = match punct.spacing() {
-                        proc_macro::Spacing::Joint => proc_macro2::Spacing::Joint,
-                        proc_macro::Spacing::Alone => proc_macro2::Spacing::Alone,
-                    };
-
-                    let punct = proc_macro2::Punct::new(ch, spacing);
-                    let punct = proc_macro2::TokenTree::Punct(punct);
-
-                    attributes[idx].extend(Some(punct))
-                },
-            },
-            proc_macro::TokenTree::Literal(_) => panic!(),
+            token if idx == 2 => attributes[2].extend(Some(token)),
+            _ => panic!(),
         }
     }
 
-    let [ty_app, ty_cfg, config] = attributes;
+    let [ty_app, ty_cfg, cfg] = attributes;
+
+    let app_ty = Into::<proc_macro2::TokenStream>::into(ty_app);
+    let cfg_ty = Into::<proc_macro2::TokenStream>::into(ty_cfg);
+    
+    let cfg = Into::<proc_macro2::TokenStream>::into(cfg);
 
     let name = proc_macro2::Ident::new(
         name.to_string().as_str(), 
@@ -68,7 +62,7 @@ fn get_impl(attr: proc_macro::TokenStream, name: proc_macro::Ident) -> proc_macr
         impl #name {
             #[no_mangle]
             pub async fn run() -> Result<(), String> {
-                backend::start::<#ty_cfg, #ty_app>(#config).await
+                backend::start::<#cfg_ty, #app_ty>(#cfg).await
             }
         }
     }.into()

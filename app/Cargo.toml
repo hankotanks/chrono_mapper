@@ -20,3 +20,7 @@ path = "../backend"
 
 [dependencies]
 anyhow = "1.0.81"
+bytemuck = { version = "1.4", features = ["derive"] }
+earcutr = "0.4.3"
+glyphon = "0.5.0"
+geojson = { version = "0.24.1", default-features = false }

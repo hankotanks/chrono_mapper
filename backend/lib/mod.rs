@@ -181,8 +181,8 @@ impl<'a> AppData<'a> {
 
 pub trait App {
     type Config: AppConfig;
-    type RenderError: std::error::Error + Send + Sync + 'static;
-    type UpdateError: std::error::Error + Send + Sync + 'static;
+    type RenderError: Into<anyhow::Error> + Send + Sync;
+    type UpdateError: Into<anyhow::Error> + Send + Sync;
 
     fn new(
         config: Self::Config, 
@@ -213,7 +213,7 @@ pub trait AppConfig: Copy {
 pub enum AppEvent<'a> {
     Key {code: event::KeyCode, state: event::ElementState },
     Mouse { button: event::MouseButton, state: event::ElementState, cursor: Position },
-    MouseScroll { delta: f32 },
+    MouseScroll { delta: f32, cursor: Position },
     MouseScrollStopped,
     MouseMotion { x: f32, y: f32 },
     Resized(Size),
@@ -245,7 +245,8 @@ impl<'a, C: AppConfig, A: App<Config = C>> Package<'a, C, A> {
             event_proxy: &event_proxy,
         };
 
-        let app = (A::new(config, data).await)?;
+        let app = (A::new(config, data).await)
+            .map_err(Into::<anyhow::Error>::into)?;
 
         let handler = UpdateHandler { 
             app, 
@@ -371,7 +372,7 @@ impl<'a, C: AppConfig, A: App<Config = C>> UpdateHandler<'a, C, A> {
                     event_target.set_control_flow(winit::event_loop::ControlFlow::Poll);
                 }
 
-                if app.handle_event(data, event)? {
+                if app.handle_event(data, event).map_err(Into::<anyhow::Error>::into)? {
                     state.window.request_redraw();
                 }
             },
@@ -383,7 +384,7 @@ impl<'a, C: AppConfig, A: App<Config = C>> UpdateHandler<'a, C, A> {
                         event_proxy,
                     };
                     
-                    if app.handle_event(data, event)? {
+                    if app.handle_event(data, event).map_err(Into::<anyhow::Error>::into)? {
                         state.window.request_redraw();
                     }
                 }

@@ -1,4 +1,4 @@
-use std::{sync, error};
+use std::sync::Arc;
 
 fn configure_surface_resolution(
     config: &mut wgpu::SurfaceConfiguration, 
@@ -18,7 +18,7 @@ fn configure_surface_resolution(
 }
 
 pub struct State<'a> {
-    pub window: sync::Arc<winit::window::Window>,
+    pub window: Arc<winit::window::Window>,
     pub required_limits: wgpu::Limits,
     pub queue: wgpu::Queue,
     pub device: wgpu::Device,
@@ -41,7 +41,7 @@ impl<'a> State<'a> {
         #[allow(non_snake_case)]
         let LIMITS = wgpu::Limits::downlevel_webgl2_defaults();
 
-        let window = sync::Arc::new({
+        let window = Arc::new({
             winit::window::WindowBuilder::new().with_title(window_title)
                 .build(event_loop)?
         });
@@ -55,14 +55,14 @@ impl<'a> State<'a> {
             .set_title(window_title);
 
         fn create_surface_target<'a>(
-            #[allow(unused_variables)] window: sync::Arc<winit::window::Window>,
+            #[allow(unused_variables)] window: Arc<winit::window::Window>,
         ) -> Result<wgpu::SurfaceTarget<'a>, wgpu::rwh::HandleError> {
             #[cfg(target_arch="wasm32")] {
                 use wasm_bindgen::JsCast as _;
 
                 fn create_canvas_handle<'a>(
                     #[allow(unused_variables)] 
-                    window: sync::Arc<winit::window::Window>,
+                    window: Arc<winit::window::Window>,
                 ) -> Result<web_sys::Element, wasm_bindgen::JsValue> {
                     use winit::platform::web::WindowExtWebSys as _;
     
@@ -104,7 +104,7 @@ impl<'a> State<'a> {
         });
 
         let surface = instance.create_surface({
-            create_surface_target(sync::Arc::clone(&window))?
+            create_surface_target(Arc::clone(&window))?
         })?;
 
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -256,7 +256,7 @@ impl<'a> State<'a> {
                     ) => (self.window.scale_factor() * scroll) as f32 / 270.,
                 } * -1.;
 
-                curr.push(crate::AppEvent::MouseScroll { delta });
+                curr.push(crate::AppEvent::MouseScroll { delta, cursor: self.cursor });
 
                 event_target.set_control_flow({
                     winit::event_loop::ControlFlow::Poll
@@ -294,7 +294,7 @@ impl<'a> State<'a> {
     }
 
     pub fn process_encoder<E, F>(&self, mut op: F) -> anyhow::Result<()> where 
-        E: error::Error + Send + Sync + 'static, 
+        E: Into<anyhow::Error> + Send + Sync, 
         F: FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView) -> Result<(), E> {
 
         let Self {
@@ -313,7 +313,7 @@ impl<'a> State<'a> {
         });
 
         op(&mut encoder, &view)
-            .map_err(anyhow::Error::from)?;
+            .map_err(Into::<anyhow::Error>::into)?;
 
         queue.submit(Some(encoder.finish()));
 

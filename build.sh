@@ -106,6 +106,7 @@ else
     BACKEND_TOP_LEVEL = $(git rev-parse --show-toplevel)
     cp -a ./pkg/. $BACKEND_TOP_LEVEL
     cd pkg
+    rm ".gitignore"
     BACKEND_FILES_TO_COMMIT=()
     for TEMP_FILENAME in *; do
       BACKEND_FILES_TO_COMMIT+=($TEMP_FILENAME)
@@ -114,10 +115,10 @@ else
     for TEMP_FILENAME in "${BACKEND_FILES_TO_COMMIT[@]}"
     do
       git add -f $TEMP_FILENAME
-      # or do whatever with individual element of the array
     done
     git commit -m.
-    read -p "Press enter to exit."
+    git checkout $BACKEND_CURR_BRANCH
+    git reset HEAD~1
   else
     echo "The first argument must specify the target [native-run, wasm32-host, wasm32-publish]."
     read -p "Press enter to exit."
@@ -125,3 +126,4 @@ else
   fi
 fi
 cd $TEMP
+read -p "Press enter to exit."
