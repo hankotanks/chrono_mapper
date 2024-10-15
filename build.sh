@@ -97,16 +97,14 @@ else
       read -p "Press enter to exit."
       exit 2
     fi
-    cd $BACKEND_OUT_DIR
-    cd ..
-    git add -f pkg/\*
+    git add -f $BACKEND_OUT_DIR
     git commit -m.
     BACKEND_TOP_LEVEL=$(git rev-parse --show-toplevel)
     git checkout gh-pages
     cd $BACKEND_TOP_LEVEL
     git checkout $BACKEND_CURR_BRANCH -- $BACKEND_OUT_DIR/*
-    cp -a ./pkg/. $BACKEND_TOP_LEVEL
-    cd pkg
+    cp -a $BACKEND_OUT_DIR/. $BACKEND_TOP_LEVEL
+    cd $BACKEND_OUT_DIR
     rm ".gitignore"
     BACKEND_FILES_TO_COMMIT=()
     for TEMP_FILENAME in *; do
