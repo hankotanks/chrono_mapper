@@ -83,7 +83,12 @@ else
     read -p "Press enter to exit."
     exit 2
   fi
-  wasm-pack build --target web --no-pack --out-name core --out-dir $BACKEND_OUT_DIR --features="logging"
+  wasm-pack build --target web --no-pack --out-name core --out-dir $BACKEND_OUT_DIR
+  if [ "$?" -ne 0 ]; then
+    echo "Halting because compilation of the wasm package failed."
+    read -p "Press enter to exit."
+    exit 1
+  fi
   if [ "$TARGET" = 'wasm32-host' ]; then
     if [ -z "$BACKEND_PORT" ]; then
       BACKEND_PORT="8080"
@@ -95,7 +100,7 @@ else
     if [ "$BACKEND_DIFF_EXIT_CODE" = "1" ] || [ "$BACKEND_DIFF_EXIT_CODE" = "False" ]; then
       echo "Unable to publish the package when there are uncommited changes in the current branch."
       read -p "Press enter to exit."
-      exit 2
+      exit 1
     fi
     git add -f $BACKEND_OUT_DIR
     git commit -m.
@@ -105,6 +110,7 @@ else
     fi
     BACKEND_CURR_BRANCH=$(git rev-parse --abbrev-ref HEAD)
     git checkout gh-pages
+    git restore $BACKEND_TOP_LEVEL
     git checkout $BACKEND_CURR_BRANCH -- $BACKEND_OUT_DIR/*
     cp -a $BACKEND_OUT_DIR/. $BACKEND_TOP_LEVEL
     cd $BACKEND_OUT_DIR
