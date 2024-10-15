@@ -113,6 +113,20 @@ else
     cd $BACKEND_TOP_LEVEL
     git restore .
     git checkout $BACKEND_CURR_BRANCH -- $BACKEND_OUT_DIR/*
+    git reset HEAD
+    cp -a $BACKEND_OUT_DIR/. $BACKEND_TOP_LEVEL
+    cd $BACKEND_OUT_DIR
+    rm ".gitignore"
+    BACKEND_FILES_TO_COMMIT=()
+    for TEMP_FILENAME in *; do
+      BACKEND_FILES_TO_COMMIT+=($TEMP_FILENAME)
+    done
+    cd $BACKEND_TOP_LEVEL
+    for TEMP_FILENAME in "${BACKEND_FILES_TO_COMMIT[@]}"
+    do
+      git add -f $TEMP_FILENAME
+    done
+    git commit -m.
   else
     echo "The first argument must specify the target [native-run, wasm32-host, wasm32-publish]."
     read -p "Press enter to exit."
