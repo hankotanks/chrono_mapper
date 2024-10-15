@@ -102,7 +102,7 @@ else
     git add -f pkg/\*
     git commit -m.
     git checkout gh-pages
-    git checkout $BACKEND_CURR_BRANCH -- pkg/*
+    git checkout $BACKEND_CURR_BRANCH -- ./pkg/*
     BACKEND_TOP_LEVEL=$(git rev-parse --show-toplevel)
     cp -a ./pkg/. $BACKEND_TOP_LEVEL
     cd pkg
