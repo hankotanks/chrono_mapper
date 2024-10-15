@@ -99,9 +99,11 @@ else
     fi
     cd $BACKEND_OUT_DIR
     cd ..
+    BACKEND_OUT_DIR_PARENT=$(pwd)
     git add -f pkg/\*
     git commit -m.
     git checkout gh-pages
+    cd $BACKEND_OUT_DIR_PARENT
     git checkout $BACKEND_CURR_BRANCH -- ./pkg/*
     BACKEND_TOP_LEVEL=$(git rev-parse --show-toplevel)
     cp -a ./pkg/. $BACKEND_TOP_LEVEL
