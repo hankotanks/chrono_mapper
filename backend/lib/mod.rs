@@ -163,12 +163,14 @@ impl<'a> AppData<'a> {
             use std::fs;
             use std::path::Path;
 
+            let state = match fs::read(Path::new(Self::OUT_DIR).join(path)) {
+                Ok(bytes) => RequestInternalState::Fulfilled(bytes),
+                Err(_) => RequestInternalState::Failed,
+            };
+
             #[allow(unused_variables)]
             let result = event_proxy.send_event({
-                let state = match fs::read(Path::new(Self::OUT_DIR).join(path)) {
-                    Ok(bytes) => RequestInternalState::Fulfilled(bytes),
-                    Err(_) => RequestInternalState::Failed,
-                }; RequestInternal { path: path.to_string(), state }
+                 RequestInternal { path: path.to_string(), state }
             });
 
             #[cfg(feature = "logging")]

@@ -59,6 +59,7 @@ pub struct SelectionList {
     line_maxima: usize,
     visible: bool,
     width_maxima: f32,
+    attrs: glyphon::Attrs<'static>,
     buffer: glyphon::Buffer,
 }
 
@@ -72,6 +73,7 @@ impl SelectionList {
     pub fn new<'a>(
         ctx: &mut TextCtx, 
         items: impl Iterator<Item = &'a str>, 
+        idx: usize,
         font_size: f32,
     ) -> Self {
         let mut buffer = glyphon::Buffer::new(
@@ -79,26 +81,21 @@ impl SelectionList {
             glyphon::Metrics::new(font_size, font_size + Self::SPACING),
         );
 
-        let idx = 0;
-
-        let font_attrs = glyphon::Attrs::new()
+        let attrs = glyphon::Attrs::new()
             .family(glyphon::Family::Fantasy)
             .color(Self::COLOR_BASE);
+        
+        let text = items.fold(String::new(), |mut text, curr| {
+            text.push_str(curr); text.push('\n'); text
+        });
 
-        buffer.set_rich_text(
-            &mut ctx.font_system, 
-            items.enumerate().map(|(idx_curr, item)| {
-                let font_attrs = if idx_curr == idx {
-                    font_attrs.color(Self::COLOR_FOCUS)
-                } else { 
-                    font_attrs 
-                }; (item, font_attrs)
-            }).flat_map(|line| [line, ("\n", font_attrs)]), 
-            glyphon::Shaping::Basic,
-        );
+        buffer.set_text(&mut ctx.font_system, &text, attrs, glyphon::Shaping::Basic);
+
+        buffer.lines[idx].set_attrs_list({
+            glyphon::AttrsList::new(attrs.color(Self::COLOR_LOADING))
+        });
 
         let height = buffer.lines.len() as f32 * (font_size + Self::SPACING);
-
         buffer.set_size(&mut ctx.font_system, f32::MAX, height);
 
         buffer.shape_until_scroll(&mut ctx.font_system);
@@ -109,11 +106,12 @@ impl SelectionList {
 
         Self {
             idx, 
-            idx_prev: 0, 
+            idx_prev: usize::MAX, 
             scroll: 0,
             line_maxima: 0,
             visible: true,
             width_maxima,
+            attrs,
             buffer,
         }
     }
@@ -131,6 +129,7 @@ impl SelectionList {
             line_maxima, 
             visible, 
             width_maxima,
+            attrs,
             buffer, .. 
         } = self;
 
@@ -138,7 +137,13 @@ impl SelectionList {
             backend::AppEvent::Request(req) => {
                 match req.state {
                     backend::RequestState::Fulfilled(_) =>  *idx_prev = *idx,
-                    backend::RequestState::Failed => *idx = *idx_prev,
+                    backend::RequestState::Failed => {
+                        if let Some(line) = buffer.lines.get_mut(*idx) {
+                            line.set_attrs_list(glyphon::AttrsList::new(*attrs));
+                        }
+                        
+                        *idx = *idx_prev
+                    },
                     backend::RequestState::Loading => { /*  */ },
                 }
 
@@ -187,12 +192,9 @@ impl SelectionList {
                     match data.get(buffer.lines[line + *scroll].text()) {
                         Ok(_) => {
                             if *idx != *idx_prev {
-                                // TODO: Don't repeat font_attrs all over this file
-                                let font_attrs = glyphon::Attrs::new()
-                                    .family(glyphon::Family::Fantasy)
-                                    .color(Self::COLOR_BASE);
-
-                                buffer.lines[*idx].set_attrs_list(glyphon::AttrsList::new(font_attrs));
+                                if let Some(line) = buffer.lines.get_mut(*idx) {
+                                    line.set_attrs_list(glyphon::AttrsList::new(*attrs));
+                                }
                             }
 
                             *idx_prev = *idx; 
@@ -251,27 +253,29 @@ impl SelectionList {
         data: backend::AppData<'_>,
     ) -> Result<(), glyphon::PrepareError> {
         use glyphon::AttrsList;
+        
         let Self { 
             idx, 
             idx_prev, 
             scroll,
             line_maxima,
+            attrs,
             buffer, .. 
         } = self;
 
-        let font_attrs = glyphon::Attrs::new()
-            .family(glyphon::Family::Fantasy)
-            .color(Self::COLOR_BASE);
-
         // update color of lines based on the state of the current asset request
         if *idx == *idx_prev {
-            let font_attrs = font_attrs.color(Self::COLOR_FOCUS);
-            buffer.lines[*idx].set_attrs_list(AttrsList::new(font_attrs));
+            if let Some(line) = buffer.lines.get_mut(*idx) {
+                line.set_attrs_list(AttrsList::new(attrs.color(Self::COLOR_FOCUS)));
+            }
         } else {
-            buffer.lines[*idx_prev].set_attrs_list(AttrsList::new(font_attrs));
+            if let Some(line) = buffer.lines.get_mut(*idx_prev) {
+                line.set_attrs_list(AttrsList::new(*attrs));
+            }
 
-            let font_attrs = font_attrs.color(Self::COLOR_LOADING);
-            buffer.lines[*idx].set_attrs_list(AttrsList::new(font_attrs));
+            if let Some(line) = buffer.lines.get_mut(*idx) {
+                line.set_attrs_list(AttrsList::new(attrs.color(Self::COLOR_LOADING)));
+            }
         }
 
         // ensure all lines are updated
