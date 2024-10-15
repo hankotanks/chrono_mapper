@@ -99,13 +99,12 @@ else
     fi
     cd $BACKEND_OUT_DIR
     cd ..
-    BACKEND_OUT_DIR_PARENT=$(pwd)
     git add -f pkg/\*
     git commit -m.
-    git checkout gh-pages
-    cd $BACKEND_OUT_DIR_PARENT
-    git checkout $BACKEND_CURR_BRANCH -- ./pkg/*
     BACKEND_TOP_LEVEL=$(git rev-parse --show-toplevel)
+    git checkout gh-pages
+    cd $BACKEND_TOP_LEVEL
+    git checkout $BACKEND_CURR_BRANCH -- $BACKEND_OUT_DIR/*
     cp -a ./pkg/. $BACKEND_TOP_LEVEL
     cd pkg
     rm ".gitignore"
