@@ -116,8 +116,11 @@ else
     cd $BACKEND_TOP_LEVEL
     for TEMP_FILENAME in "${BACKEND_FILES_TO_COMMIT[@]}"
     do
-      echo "$TEMP_FILENAME"
+      git add -f $TEMP_FILENAME
     done
+    git commit -m.
+    git checkout $BACKEND_CURR_BRANCH
+    git reset HEAD~1
   else
     echo "The first argument must specify the target [native-run, wasm32-host, wasm32-publish]."
     read -p "Press enter to exit."
