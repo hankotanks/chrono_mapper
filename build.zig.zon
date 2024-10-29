@@ -1,0 +1,18 @@
+.{
+    .name = "chrono_mapper",
+    .version = "0.0.0",
+    .minimum_zig_version = "0.13.0",
+    .dependencies = .{
+        .zjb = .{
+            .url = "git+https://github.com/scottredig/zig-javascript-bridge#84b408d1c3910a1ca24e2e6208566ad71eff3ac8",
+            .hash = "1220e9dd54006f3fae34704edc21089eb2db480288d017ded6fbfb9dc8f08914df5a",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "web",
+        "assets",
+    },
+}
