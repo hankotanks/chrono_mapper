@@ -62,7 +62,15 @@ const Pack = struct {
             if (entry.kind != .file) {
                 continue;
             }
-            try files.append(b.dupe(entry.path));
+            // replace backslashes (paths are web are '/' delimited)
+            var entry_path = b.dupe(entry.path);
+            for (0..entry_path.len) |i| {
+                if (entry_path[i] == '\\') {
+                    entry_path[i] = '/';
+                }
+            }
+            // append path
+            try files.append(entry_path);
         }
         // add to manifest
         self.manifest.addOption([]const []const u8, name, files.items);

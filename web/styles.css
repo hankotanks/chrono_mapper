@@ -33,5 +33,6 @@ canvas {
     border: none;
     background: none;
     margin: 2px;
+    white-space: nowrap;
     cursor: pointer;
 }
