@@ -70,7 +70,7 @@ impl Camera {
                 
                 self.dragging != temp
             },
-            backend::AppEvent::MouseScroll { delta } => {
+            backend::AppEvent::MouseScroll { delta, .. } => {
                 let lower = delta < 0. && mult > 0.0;
                 let upper = delta > 0. && mult < 1.0;
 

@@ -9,7 +9,6 @@ pub enum LoaderError {
     InvalidPath(str::Utf8Error),
     InvalidGeoJson(geojson::Error),
     BrokenGeometry(earcutr::Error),
-    LabelFailure(glyphon::PrepareError),
 }
 
 impl fmt::Display for LoaderError {
@@ -18,7 +17,6 @@ impl fmt::Display for LoaderError {
             LoaderError::InvalidPath(err) => write!(f, "{}", err),
             LoaderError::InvalidGeoJson(err) => write!(f, "{}", err),
             LoaderError::BrokenGeometry(err) => write!(f, "{}", err),
-            LoaderError::LabelFailure(err) => write!(f, "{}", err),
         }
     }
 }
@@ -40,6 +38,7 @@ pub struct FeatureManager {
     swash_cache: glyphon::SwashCache,
     atlas: glyphon::TextAtlas,
     buttons: glyphon::Buffer,
+    buttons_width: f32,
     renderer: glyphon::TextRenderer,
 }
 
@@ -101,6 +100,7 @@ impl FeatureManager {
             swash_cache: glyphon::SwashCache::new(),
             atlas,
             buttons,
+            buttons_width: f32::MAX,
             renderer,
         }
     }
@@ -124,14 +124,16 @@ impl FeatureManager {
 
                 #[allow(unused_variables)]
                 if let Err(e) = self.prepare(device, queue, size) {
+                    self.atlas.trim();
+
                     #[cfg(feature = "logging")] 
                     backend::log::debug!("Failed to prepare layer selection pane.\n{e}");
                 }
 
-                // other components need to process side changes
+                // other components need to process size changes
                 false
             },
-            backend::AppEvent::MouseScroll { delta } if self.toggled => {
+            backend::AppEvent::MouseScroll { delta, cursor } if self.toggled && cursor.x < self.buttons_width => {
                 let (width, height) = self.buttons.size();
 
                 let line_maxima = (height / Self::METRICS.line_height).floor() as usize;
@@ -149,6 +151,8 @@ impl FeatureManager {
 
                 #[allow(unused_variables)]
                 if let Err(e) = self.prepare(device, queue, screen_resolution) {
+                    self.atlas.trim();
+
                     #[cfg(feature = "logging")] 
                     backend::log::debug!("Failed to prepare layer selection pane.\n{e}");
                 }
@@ -179,16 +183,12 @@ impl FeatureManager {
             backend::AppEvent::Key { 
                 code: backend::event::KeyCode::Tab, 
                 state: backend::event::ElementState::Released,
-            } => { 
-                self.toggled = !self.toggled; 
-                
-                true
-            },
+            } => { self.toggled = !self.toggled; true },
             _ => false,
         }
     }
 
-    pub fn prepare(
+    fn prepare(
         &mut self,
         device: &wgpu::Device, 
         queue: &wgpu::Queue,
@@ -199,6 +199,7 @@ impl FeatureManager {
             idx_scroll,
             feature_paths,
             buttons,
+            buttons_width,
             font_system, 
             font_attrs, 
             atlas,
@@ -226,6 +227,17 @@ impl FeatureManager {
         );
 
         buttons.set_size(font_system, width as f32, height as f32);
+
+        buttons.shape_until_scroll(font_system);
+
+        *buttons_width = buttons
+            .layout_runs()
+            .fold::<Option<f32>, _>(None, |w, glyphon::LayoutRun { line_w, .. }| {
+                match w {
+                    Some(w) => Some(w.max(line_w)),
+                    None => Some(line_w),
+                }
+            }).unwrap_or(width as f32);
 
         let region = glyphon::TextArea {
             buffer: buttons,
@@ -283,8 +295,13 @@ impl FeatureManager {
             *globe_radius, 
         ).map_err(LoaderError::BrokenGeometry)?;
 
-        self.prepare(device, queue, screen_resolution)
-            .map_err(LoaderError::LabelFailure)?;
+        #[allow(unused_variables)]
+        if let Err(e) = self.prepare(device, queue, screen_resolution) {
+            self.atlas.trim();
+            
+            #[cfg(feature = "logging")] 
+            backend::log::debug!("Failed to prepare layer selection pane.\n{e}");
+        }
 
         Ok(geometry)
     }

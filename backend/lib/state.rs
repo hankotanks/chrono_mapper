@@ -268,21 +268,25 @@ impl<'a> State<'a> {
                 event: winit::event::DeviceEvent::MouseWheel { 
                     delta,
                 }, ..
-            } => {
-                let delta = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, y) => y,
-                    winit::event::MouseScrollDelta::PixelDelta(
-                        winit::dpi::PhysicalPosition { y: scroll, .. }
-                    ) => (self.window.scale_factor() * scroll) as f32 / 270.,
-                } * -1.;
-
-                curr.push(crate::AppEvent::MouseScroll { delta });
-
-                event_target.set_control_flow({
-                    winit::event_loop::ControlFlow::Poll
-                });
-
-                self.scroll_state = Some(chrono::Local::now());
+            } => match self.cursor {
+                Some(cursor) => {
+                    let delta = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                        winit::event::MouseScrollDelta::PixelDelta(
+                            winit::dpi::PhysicalPosition { y: scroll, .. }
+                        ) => (self.window.scale_factor() * scroll) as f32 / 270.,
+                    } * -1.;
+    
+                    let cursor = crate::Position::from(cursor);
+    
+                    curr.push(crate::AppEvent::MouseScroll { delta, cursor });
+    
+                    event_target.set_control_flow({
+                        winit::event_loop::ControlFlow::Poll
+                    });
+    
+                    self.scroll_state = Some(chrono::Local::now());
+                }, None => { /*  */ },
             },
             _ => { /*  */ },
         }

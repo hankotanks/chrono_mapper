@@ -207,13 +207,12 @@ impl Geometry<FeatureVertex, FeatureMetadata> {
         use wgpu::util::DeviceExt as _;
 
         fn validation(feature: &geojson::Feature) -> Option<TempFeature<'_>> {
-            TempFeature::validate(feature, |metadata| {
-                match metadata.get("NAME") {
-                    Some(geojson::JsonValue::Null) => false,
-                    Some(geojson::JsonValue::String(_)) => true, 
-                    _ => false,
-                }
-            })
+            use geojson::JsonValue;
+
+            TempFeature::validate(feature, |metadata| matches!(
+                    metadata.get("NAME"), 
+                    Some(JsonValue::Null) | Some(JsonValue::String(_))
+            ))
         }
 
         let maxima = {

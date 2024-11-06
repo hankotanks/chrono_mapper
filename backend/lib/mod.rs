@@ -77,7 +77,7 @@ impl From<winit::dpi::PhysicalSize<u32>> for Size {
 pub enum AppEvent {
     Key {code: event::KeyCode, state: event::ElementState },
     Mouse { button: event::MouseButton, state: event::ElementState, cursor: Position },
-    MouseScroll { delta: f32 },
+    MouseScroll { delta: f32, cursor: Position },
     MouseScrollStopped,
     MouseMotion { x: f32, y: f32 },
     Resized(Size)

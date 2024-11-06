@@ -458,10 +458,15 @@ impl backend::App for App {
                     camera.build_camera_uniform(*screen_resolution),
                     *globe_radius,
                 );
+
+                #[allow(unused_variables)]
+                if let Err(e) = feature_labels.prepare(device, queue, *screen_resolution) {
+                    // clear screen rays to prevent rendering broken labels
+                    screen_rays.clear();
     
-                feature_labels
-                    .prepare(device, queue, *screen_resolution)
-                    .map_err(loader::LoaderError::LabelFailure)?;
+                    #[cfg(feature = "logging")] 
+                    backend::log::debug!("Failed to position feature labels.\n{e}");
+                }
             },
             #[allow(unused_variables)]
             Err(e) => {
